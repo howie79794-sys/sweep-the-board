@@ -150,11 +150,12 @@ async def get_baseline_price(asset_id: int, db: Session = Depends(get_db)):
 
 @router.post("/update")
 async def trigger_update(
-    request: DataUpdateRequest = Body(..., embed=False),
+    request: DataUpdateRequest,
     db: Session = Depends(get_db)
 ):
     """触发数据更新（支持全部或指定资产）"""
     print(f"[API] ========== 收到数据更新请求 ==========")
+    print(f"[API] Received data: {request}")
     print(f"[API] 请求体类型: {type(request)}")
     print(f"[API] 请求体内容: asset_ids={request.asset_ids} (类型: {type(request.asset_ids)}), force={request.force}")
     

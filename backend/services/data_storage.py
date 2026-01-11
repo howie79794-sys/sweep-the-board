@@ -107,7 +107,13 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
         print(f"[数据更新] 错误: 资产不存在 (asset_id={asset_id})")
         return {"success": False, "message": "资产不存在", "stored_count": 0}
     
-    print(f"[数据更新] 资产信息: ID={asset.id}, 名称={asset.name}, 代码={asset.code}, 类型={asset.asset_type}")
+    print(f"[数据更新] 资产信息: ID={asset.id}, 名称={asset.name}, 代码={asset.code} (原始格式), 类型={asset.asset_type}")
+    
+    # 确保代码格式正确（代码格式转换会在 fetch_asset_data 中自动处理）
+    from services.data_fetcher import normalize_stock_code
+    normalized_code = normalize_stock_code(asset.code)
+    if normalized_code != asset.code:
+        print(f"[数据更新] 代码格式转换: {asset.code} -> {normalized_code}")
     
     # 确定更新日期范围
     start_date = asset.start_date.isoformat() if asset.start_date else "2026-01-06"

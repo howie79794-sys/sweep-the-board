@@ -147,11 +147,13 @@ export const dataAPI = {
       requestBody.asset_ids = null
     }
     
-    console.log('[API] 发送数据更新请求:', requestBody)
+    const bodyString = JSON.stringify(requestBody)
+    console.log('[API] Sending data:', bodyString)
+    console.log('[API] 发送数据更新请求 (对象):', requestBody)
     
     return fetchAPI<any>('/api/data/update', {
       method: 'POST',
-      body: JSON.stringify(requestBody),
+      body: bodyString,
     })
   },
 }
