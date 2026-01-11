@@ -12,6 +12,12 @@ from models.market_data import MarketData
 router = APIRouter()
 
 
+class DataUpdateRequest(BaseModel):
+    """数据更新请求模型"""
+    asset_ids: Optional[List[int]] = None
+    force: bool = False
+
+
 class MarketDataResponse(BaseModel):
     id: int
     asset_id: int
@@ -132,17 +138,19 @@ async def get_baseline_price(asset_id: int, db: Session = Depends(get_db)):
 
 @router.post("/update")
 async def trigger_update(
-    asset_ids: Optional[List[int]] = None,
-    force: bool = False,
+    request: DataUpdateRequest,
     db: Session = Depends(get_db)
 ):
     """触发数据更新（支持全部或指定资产）"""
     print(f"[API] ========== 收到数据更新请求 ==========")
-    print(f"[API] asset_ids: {asset_ids}, force: {force}")
+    print(f"[API] 请求体: asset_ids={request.asset_ids}, force={request.force}")
     
     from services.data_storage import update_asset_data, update_all_assets_data
     from services.ranking_calculator import save_rankings
     from datetime import date
+    
+    asset_ids = request.asset_ids
+    force = request.force
     
     try:
         if asset_ids:

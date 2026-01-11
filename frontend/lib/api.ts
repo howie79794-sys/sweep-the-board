@@ -135,7 +135,10 @@ export const dataAPI = {
   getBaselinePrice: (assetId: number) => fetchAPI<any>(`/api/data/assets/${assetId}/baseline`),
   update: (assetIds?: number[], force?: boolean) => fetchAPI<any>('/api/data/update', {
     method: 'POST',
-    body: JSON.stringify({ asset_ids: assetIds, force }),
+    body: JSON.stringify({ 
+      asset_ids: assetIds || null, 
+      force: force ?? false 
+    }),
   }),
 }
 
