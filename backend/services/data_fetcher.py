@@ -78,98 +78,122 @@ def fetch_stock_data(code: str, start_date: str, end_date: str) -> Optional[pd.D
         end_dt = end_date.replace("-", "")
         print(f"[数据获取] 标准化后的日期: start={start_dt}, end={end_dt}")
         
-        # akshare获取股票历史数据（添加超时处理）
+        # akshare获取股票历史数据（添加超时处理和代码适配）
         print(f"[数据获取] 调用 akshare.stock_zh_a_hist...")
-        try:
-            # 设置超时时间为 30 秒
-            # akshare 内部使用 requests，我们通过 monkey patch 来设置超时
-            import requests
-            original_get = requests.get
-            original_post = requests.post
-            
-            def patched_get(*args, **kwargs):
-                kwargs.setdefault('timeout', 30)
-                return original_get(*args, **kwargs)
-            
-            def patched_post(*args, **kwargs):
-                kwargs.setdefault('timeout', 30)
-                return original_post(*args, **kwargs)
-            
-            requests.get = patched_get
-            requests.post = patched_post
-            
+        
+        def fetch_with_code(symbol_code):
+            """使用指定代码获取数据"""
             try:
-                df = ak.stock_zh_a_hist(
-                    symbol=clean_code,
-                    period="daily",
-                    start_date=start_dt,
-                    end_date=end_dt,
-                    adjust=""
-                )
-            finally:
-                # 恢复原始函数
-                requests.get = original_get
-                requests.post = original_post
-        except TimeoutError as e:
-            print(f"[数据获取] 超时错误: {str(e)}")
-            raise
-        except Exception as e:
-            print(f"[数据获取] akshare 调用异常: {type(e).__name__}: {str(e)}")
-            raise
+                # 设置超时时间为 30 秒
+                import requests
+                original_get = requests.get
+                original_post = requests.post
+                
+                def patched_get(*args, **kwargs):
+                    kwargs.setdefault('timeout', 30)
+                    return original_get(*args, **kwargs)
+                
+                def patched_post(*args, **kwargs):
+                    kwargs.setdefault('timeout', 30)
+                    return original_post(*args, **kwargs)
+                
+                requests.get = patched_get
+                requests.post = patched_post
+                
+                try:
+                    df = ak.stock_zh_a_hist(
+                        symbol=symbol_code,
+                        period="daily",
+                        start_date=start_dt,
+                        end_date=end_dt,
+                        adjust=""
+                    )
+                    return df
+                finally:
+                    # 恢复原始函数
+                    requests.get = original_get
+                    requests.post = original_post
+            except TimeoutError as e:
+                print(f"[数据获取] 超时错误: {str(e)}")
+                raise
+            except Exception as e:
+                print(f"[数据获取] akshare 调用异常: {type(e).__name__}: {str(e)}")
+                raise
+        
+        # 首先尝试使用原始代码
+        df = fetch_with_code(clean_code)
+        
+        # 如果返回为空，尝试自动适配市场前缀
+        if df is None or df.empty:
+            print(f"[数据获取] 警告: 使用代码 {clean_code} 未获取到数据，尝试适配市场前缀...")
+            
+            # 尝试不同的代码格式
+            code_variants = []
+            
+            # 如果代码是纯数字，尝试添加市场前缀
+            if clean_code.isdigit():
+                # 根据代码前缀判断市场
+                if clean_code.startswith('6'):
+                    # 6开头通常是上海市场
+                    code_variants.append(clean_code)
+                    code_variants.append(f"sh{clean_code}")
+                elif clean_code.startswith(('0', '3')):
+                    # 0或3开头通常是深圳市场
+                    code_variants.append(clean_code)
+                    code_variants.append(f"sz{clean_code}")
+            else:
+                # 如果代码已经有前缀，尝试去掉前缀
+                if clean_code.lower().startswith('sh'):
+                    code_variants.append(clean_code)
+                    code_variants.append(clean_code[2:])
+                elif clean_code.lower().startswith('sz'):
+                    code_variants.append(clean_code)
+                    code_variants.append(clean_code[2:])
+                else:
+                    # 尝试添加前缀
+                    if clean_code.startswith('6'):
+                        code_variants.append(f"sh{clean_code}")
+                    elif clean_code.startswith(('0', '3')):
+                        code_variants.append(f"sz{clean_code}")
+            
+            # 去除重复并尝试
+            code_variants = list(dict.fromkeys(code_variants))  # 保持顺序的去重
+            print(f"[数据获取] 尝试的代码变体: {code_variants}")
+            
+            for variant in code_variants:
+                if variant == clean_code:
+                    continue  # 已经试过了
+                
+                try:
+                    print(f"[数据获取] 尝试代码变体: {variant}")
+                    df = fetch_with_code(variant)
+                    if df is not None and not df.empty:
+                        print(f"[数据获取] ✓ 使用代码变体 {variant} 成功获取数据")
+                        break
+                except Exception as e:
+                    print(f"[数据获取] 代码变体 {variant} 失败: {type(e).__name__}: {str(e)}")
+                    continue
         
         if df is None or df.empty:
-            print(f"[数据获取] 警告: 未获取到数据，返回空结果")
+            print(f"[数据获取] 警告: 所有代码变体都未获取到数据，返回空结果")
             return None
         
         print(f"[数据获取] 成功获取 {len(df)} 条数据")
         print(f"[数据获取] 数据列数: {len(df.columns)}, 列名: {list(df.columns)}")
         
-        # 动态重命名列（兼容 11 列或 12 列的情况）
-        # AkShare 返回的列名映射（根据实际返回的列名进行映射）
-        column_mapping = {}
+        # 动态适配列数，只取前 11 列或按列名重命名
+        expected_cols = ['date', 'open', 'close', 'high', 'low', 'volume', 'turnover', 'amplitude', 'change_pct', 'change_amount', 'turnover_rate']
         
-        # 检查并映射我们需要的列
-        # 常见的 AkShare 列名（可能因版本而异）
-        possible_column_names = {
-            'date': ['日期', 'date', '交易日期'],
-            'open': ['开盘', 'open', '开盘价'],
-            'close': ['收盘', 'close', '收盘价'],
-            'high': ['最高', 'high', '最高价'],
-            'low': ['最低', 'low', '最低价'],
-            'volume': ['成交量', 'volume', '成交额'],
-            'turnover': ['成交额', 'turnover', '成交金额'],
-            'amplitude': ['振幅', 'amplitude', '涨跌幅'],
-            'change_pct': ['涨跌幅', 'change_pct', '涨跌幅度', '涨跌%'],
-            'change_amount': ['涨跌额', 'change_amount', '涨跌金额'],
-            'turnover_rate': ['换手率', 'turnover_rate', '换手']
-        }
+        # 确保至少有足够的列
+        if len(df.columns) < len(expected_cols):
+            print(f"[数据获取] 警告: 数据列数 {len(df.columns)} 少于预期 {len(expected_cols)} 列")
         
-        # 动态匹配列名
-        for target_col, possible_names in possible_column_names.items():
-            for col in df.columns:
-                if str(col).strip() in possible_names or str(col).strip().lower() == target_col.lower():
-                    column_mapping[col] = target_col
-                    break
+        # 只取前 11 列
+        df = df.iloc[:, :len(expected_cols)]
+        # 赋值列名
+        df.columns = expected_cols
         
-        # 使用 rename 只重命名匹配到的列，保留其他列不变
-        if column_mapping:
-            df = df.rename(columns=column_mapping)
-            print(f"[数据获取] 列名映射完成: {column_mapping}")
-        else:
-            # 如果没有匹配到，尝试按位置映射（兼容旧版本）
-            print(f"[数据获取] 警告: 未找到匹配的列名，尝试按位置映射")
-            if len(df.columns) >= 11:
-                # 如果列数足够，尝试按位置映射前 11 列
-                expected_columns = ['date', 'open', 'close', 'high', 'low', 'volume', 'turnover', 'amplitude', 'change_pct', 'change_amount', 'turnover_rate']
-                position_mapping = {}
-                for i, expected_col in enumerate(expected_columns):
-                    if i < len(df.columns):
-                        position_mapping[df.columns[i]] = expected_col
-                if position_mapping:
-                    df = df.rename(columns=position_mapping)
-                    print(f"[数据获取] 按位置映射列名: {position_mapping}")
-        
-        print(f"[数据获取] 最终列名: {list(df.columns)}")
+        print(f"[数据获取] 列名处理完成，最终列名: {list(df.columns)}")
         
         return df
     except Exception as e:
