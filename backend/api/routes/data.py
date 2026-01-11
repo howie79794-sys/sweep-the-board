@@ -137,40 +137,60 @@ async def trigger_update(
     db: Session = Depends(get_db)
 ):
     """触发数据更新（支持全部或指定资产）"""
+    print(f"[API] ========== 收到数据更新请求 ==========")
+    print(f"[API] asset_ids: {asset_ids}, force: {force}")
+    
     from services.data_storage import update_asset_data, update_all_assets_data
     from services.ranking_calculator import save_rankings
     from datetime import date
     
-    if asset_ids:
-        # 更新指定资产
-        results = []
-        for asset_id in asset_ids:
-            result = update_asset_data(asset_id, db, force)
-            results.append({
-                "asset_id": asset_id,
+    try:
+        if asset_ids:
+            print(f"[API] 更新指定资产: {asset_ids}")
+            # 更新指定资产
+            results = []
+            for asset_id in asset_ids:
+                print(f"[API] 处理资产 ID: {asset_id}")
+                result = update_asset_data(asset_id, db, force)
+                results.append({
+                    "asset_id": asset_id,
+                    **result
+                })
+            
+            print(f"[API] 开始计算排名...")
+            # 计算排名
+            today = date.today()
+            save_rankings(today, db)
+            print(f"[API] 排名计算完成")
+            
+            response = {
+                "message": "数据更新完成",
+                "results": results
+            }
+            print(f"[API] ========== 数据更新请求完成 ==========")
+            return response
+        else:
+            print(f"[API] 更新所有资产")
+            # 更新所有资产
+            result = update_all_assets_data(db, force)
+            
+            print(f"[API] 开始计算排名...")
+            # 计算排名
+            today = date.today()
+            save_rankings(today, db)
+            print(f"[API] 排名计算完成")
+            
+            response = {
+                "message": "所有资产数据更新完成",
                 **result
-            })
-        
-        # 计算排名
-        today = date.today()
-        save_rankings(today, db)
-        
-        return {
-            "message": "数据更新完成",
-            "results": results
-        }
-    else:
-        # 更新所有资产
-        result = update_all_assets_data(db, force)
-        
-        # 计算排名
-        today = date.today()
-        save_rankings(today, db)
-        
-        return {
-            "message": "所有资产数据更新完成",
-            **result
-        }
+            }
+            print(f"[API] ========== 数据更新请求完成 ==========")
+            return response
+    except Exception as e:
+        print(f"[API] 错误: 数据更新请求处理失败: {type(e).__name__}: {str(e)}")
+        import traceback
+        print(f"[API] 错误堆栈:\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"数据更新失败: {str(e)}")
 
 
 @router.get("/markets/types")

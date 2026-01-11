@@ -22,14 +22,18 @@ def store_market_data(
     Returns:
         存储的数据条数
     """
+    print(f"[数据存储] 开始存储市场数据: asset_id={asset_id}, 数据条数={len(market_data_list)}")
+    
     asset = db.query(Asset).filter(Asset.id == asset_id).first()
     if not asset:
+        print(f"[数据存储] 错误: 资产不存在 (asset_id={asset_id})")
         return 0
     
     stored_count = 0
+    updated_count = 0
     baseline_date_obj = date.fromisoformat(BASELINE_DATE)
     
-    for data in market_data_list:
+    for idx, data in enumerate(market_data_list, 1):
         try:
             date_obj = date.fromisoformat(data["date"])
             
@@ -48,6 +52,9 @@ def store_market_data(
                 existing.market_cap = data.get("market_cap")
                 if data.get("additional_data"):
                     existing.additional_data = json.dumps(data["additional_data"], ensure_ascii=False)
+                updated_count += 1
+                if idx % 50 == 0:
+                    print(f"[数据存储] 已处理 {idx}/{len(market_data_list)} 条数据 (更新)")
             else:
                 # 创建新数据
                 market_data = MarketData(
@@ -61,19 +68,24 @@ def store_market_data(
                     additional_data=json.dumps(data.get("additional_data", {}), ensure_ascii=False) if data.get("additional_data") else None
                 )
                 db.add(market_data)
+                stored_count += 1
+                if idx % 50 == 0:
+                    print(f"[数据存储] 已处理 {idx}/{len(market_data_list)} 条数据 (新增)")
             
             # 如果是基准日，更新资产的基准价格
             if date_obj == baseline_date_obj and data["close_price"]:
                 asset.baseline_price = data["close_price"]
                 asset.baseline_date = baseline_date_obj
+                print(f"[数据存储] 更新基准价格: {data['close_price']} (日期: {baseline_date_obj})")
             
-            stored_count += 1
         except Exception as e:
-            print(f"存储市场数据失败: {e}")
+            print(f"[数据存储] 警告: 存储市场数据失败 (第 {idx} 条): {type(e).__name__}: {str(e)}")
             continue
     
+    print(f"[数据存储] 提交数据库事务...")
     db.commit()
-    return stored_count
+    print(f"[数据存储] 存储完成: 新增={stored_count}, 更新={updated_count}, 总计={stored_count + updated_count}")
+    return stored_count + updated_count
 
 
 def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
@@ -88,13 +100,20 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
     Returns:
         {"success": bool, "message": str, "stored_count": int}
     """
+    print(f"[数据更新] ========== 开始更新资产数据 (asset_id={asset_id}, force={force}) ==========")
+    
     asset = db.query(Asset).filter(Asset.id == asset_id).first()
     if not asset:
+        print(f"[数据更新] 错误: 资产不存在 (asset_id={asset_id})")
         return {"success": False, "message": "资产不存在", "stored_count": 0}
+    
+    print(f"[数据更新] 资产信息: ID={asset.id}, 名称={asset.name}, 代码={asset.code}, 类型={asset.asset_type}")
     
     # 确定更新日期范围
     start_date = asset.start_date.isoformat() if asset.start_date else "2026-01-06"
     end_date = asset.end_date.isoformat() if asset.end_date else "2026-12-31"
+    
+    print(f"[数据更新] 资产配置的日期范围: {start_date} 至 {end_date}")
     
     # 如果不需要强制更新，检查最新数据日期
     if not force:
@@ -106,8 +125,14 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
             # 从最新数据日期之后开始更新
             from datetime import timedelta
             start_date = (latest_data.date + timedelta(days=1)).isoformat()
+            print(f"[数据更新] 检测到已有最新数据日期: {latest_data.date}, 将从 {start_date} 开始更新")
+        else:
+            print(f"[数据更新] 未检测到已有数据，将从配置的开始日期更新")
+    else:
+        print(f"[数据更新] 强制更新模式，将更新整个日期范围")
     
     try:
+        print(f"[数据更新] 调用 fetch_asset_data 获取数据...")
         # 获取数据
         market_data_list = fetch_asset_data(
             code=asset.code,
@@ -116,28 +141,41 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
             end_date=end_date
         )
         
+        print(f"[数据更新] fetch_asset_data 返回 {len(market_data_list) if market_data_list else 0} 条数据")
+        
         if not market_data_list:
+            print(f"[数据更新] 警告: 未获取到数据")
             return {"success": False, "message": "未获取到数据", "stored_count": 0}
         
+        print(f"[数据更新] 开始存储数据到数据库...")
         # 存储数据
         stored_count = store_market_data(asset_id, market_data_list, db)
+        print(f"[数据更新] 成功存储 {stored_count} 条数据")
         
+        print(f"[数据更新] 更新基准价格...")
         # 更新基准价格
         get_or_set_baseline_price(asset, db)
         
+        print(f"[数据更新] ========== 资产数据更新完成 (asset_id={asset_id}) ==========")
         return {
             "success": True,
             "message": f"成功更新 {stored_count} 条数据",
             "stored_count": stored_count
         }
     except Exception as e:
+        print(f"[数据更新] 错误: 更新资产数据失败 (asset_id={asset_id}): {type(e).__name__}: {str(e)}")
+        import traceback
+        print(f"[数据更新] 错误堆栈:\n{traceback.format_exc()}")
         db.rollback()
         return {"success": False, "message": f"更新失败: {str(e)}", "stored_count": 0}
 
 
 def update_all_assets_data(db: Session, force: bool = False) -> Dict:
     """更新所有资产数据"""
+    print(f"[数据更新] ========== 开始批量更新所有资产数据 (force={force}) ==========")
+    
     assets = db.query(Asset).all()
+    print(f"[数据更新] 找到 {len(assets)} 个资产需要更新")
     
     results = {
         "total": len(assets),
@@ -146,16 +184,20 @@ def update_all_assets_data(db: Session, force: bool = False) -> Dict:
         "details": []
     }
     
-    for asset in assets:
+    for idx, asset in enumerate(assets, 1):
+        print(f"[数据更新] -------- 处理资产 {idx}/{len(assets)}: {asset.name} (ID: {asset.id}) --------")
         result = update_asset_data(asset.id, db, force)
         if result["success"]:
             results["success"] += 1
+            print(f"[数据更新] ✓ 资产 {asset.name} 更新成功")
         else:
             results["failed"] += 1
+            print(f"[数据更新] ✗ 资产 {asset.name} 更新失败: {result.get('message', '未知错误')}")
         results["details"].append({
             "asset_id": asset.id,
             "asset_name": asset.name,
             "result": result
         })
     
+    print(f"[数据更新] ========== 批量更新完成: 总计={results['total']}, 成功={results['success']}, 失败={results['failed']} ==========")
     return results

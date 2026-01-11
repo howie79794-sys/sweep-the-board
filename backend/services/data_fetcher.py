@@ -9,37 +9,71 @@ import time
 from config import BASELINE_DATE
 
 
+def normalize_stock_code(code: str) -> str:
+    """
+    标准化股票代码格式
+    支持多种输入格式：
+    - SH601727 -> 601727
+    - SZ300857 -> 300857
+    - 601727.SH -> 601727
+    - 300857.SZ -> 300857
+    - 601727 -> 601727 (保持不变)
+    """
+    # 去掉市场后缀 (.SH, .SZ)
+    code = code.replace(".SH", "").replace(".SZ", "")
+    # 去掉市场前缀 (SH, SZ)
+    code = code.replace("SH", "").replace("SZ", "")
+    return code
+
+
 def fetch_stock_data(code: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
     """
     获取A股股票数据
     
     Args:
-        code: 股票代码，如 "300857" 或 "600580"
-        start_date: 开始日期 "YYYYMMDD"
-        end_date: 结束日期 "YYYYMMDD"
+        code: 股票代码，支持多种格式：
+              - SH601727, SZ300857 (前缀格式)
+              - 601727.SH, 300857.SZ (后缀格式)
+              - 601727, 300857 (纯数字)
+        start_date: 开始日期 "YYYY-MM-DD" 或 "YYYYMMDD"
+        end_date: 结束日期 "YYYY-MM-DD" 或 "YYYYMMDD"
     """
     try:
-        # 处理代码格式（去掉市场前缀）
-        clean_code = code.replace("SZ", "").replace("SH", "")
+        print(f"[数据获取] 开始获取股票数据: code={code}, start_date={start_date}, end_date={end_date}")
+        
+        # 标准化代码格式（akshare 需要纯数字代码）
+        clean_code = normalize_stock_code(code)
+        print(f"[数据获取] 标准化后的代码: {clean_code}")
+        
+        # 标准化日期格式（akshare 需要 YYYYMMDD）
+        start_dt = start_date.replace("-", "")
+        end_dt = end_date.replace("-", "")
+        print(f"[数据获取] 标准化后的日期: start={start_dt}, end={end_dt}")
         
         # akshare获取股票历史数据
+        print(f"[数据获取] 调用 akshare.stock_zh_a_hist...")
         df = ak.stock_zh_a_hist(
             symbol=clean_code,
             period="daily",
-            start_date=start_date.replace("-", ""),
-            end_date=end_date.replace("-", ""),
+            start_date=start_dt,
+            end_date=end_dt,
             adjust=""
         )
         
         if df is None or df.empty:
+            print(f"[数据获取] 警告: 未获取到数据，返回空结果")
             return None
+        
+        print(f"[数据获取] 成功获取 {len(df)} 条数据")
         
         # 重命名列
         df.columns = ['date', 'open', 'close', 'high', 'low', 'volume', 'turnover', 'amplitude', 'change_pct', 'change_amount', 'turnover_rate']
         
         return df
     except Exception as e:
-        print(f"获取股票数据失败 {code}: {e}")
+        print(f"[数据获取] 错误: 获取股票数据失败 {code}: {type(e).__name__}: {str(e)}")
+        import traceback
+        print(f"[数据获取] 错误堆栈:\n{traceback.format_exc()}")
         return None
 
 
@@ -48,19 +82,29 @@ def fetch_fund_data(code: str, start_date: str, end_date: str) -> Optional[pd.Da
     获取基金/ETF数据
     
     Args:
-        code: 基金代码，如 "513010"
+        code: 基金代码，支持多种格式：
+              - SH513010, SZ513010 (前缀格式)
+              - 513010.SH, 513010.SZ (后缀格式)
+              - 513010 (纯数字)
         start_date: 开始日期 "YYYY-MM-DD"
         end_date: 结束日期 "YYYY-MM-DD"
     """
     try:
-        # 处理代码格式
-        clean_code = code.replace("SZ", "").replace("SH", "")
+        print(f"[数据获取] 开始获取基金数据: code={code}, start_date={start_date}, end_date={end_date}")
+        
+        # 标准化代码格式
+        clean_code = normalize_stock_code(code)
+        print(f"[数据获取] 标准化后的代码: {clean_code}")
         
         # akshare获取ETF历史数据
+        print(f"[数据获取] 调用 akshare.fund_etf_hist_sina...")
         df = ak.fund_etf_hist_sina(symbol=clean_code)
         
         if df is None or df.empty:
+            print(f"[数据获取] 警告: 未获取到基金数据，返回空结果")
             return None
+        
+        print(f"[数据获取] 成功获取 {len(df)} 条基金数据（筛选前）")
         
         # 筛选日期范围
         df['date'] = pd.to_datetime(df['date'])
@@ -68,9 +112,13 @@ def fetch_fund_data(code: str, start_date: str, end_date: str) -> Optional[pd.Da
         end = pd.to_datetime(end_date)
         df = df[(df['date'] >= start) & (df['date'] <= end)]
         
+        print(f"[数据获取] 日期筛选后剩余 {len(df)} 条数据")
+        
         return df
     except Exception as e:
-        print(f"获取基金数据失败 {code}: {e}")
+        print(f"[数据获取] 错误: 获取基金数据失败 {code}: {type(e).__name__}: {str(e)}")
+        import traceback
+        print(f"[数据获取] 错误堆栈:\n{traceback.format_exc()}")
         return None
 
 
@@ -148,7 +196,7 @@ def fetch_asset_data(
     获取资产数据（统一接口）
     
     Args:
-        code: 资产代码
+        code: 资产代码（支持多种格式：SH601727, 601727.SH, 601727 等）
         asset_type: 资产类型 (stock, fund, futures, forex)
         start_date: 开始日期 "YYYY-MM-DD"
         end_date: 结束日期 "YYYY-MM-DD"
@@ -156,15 +204,19 @@ def fetch_asset_data(
     Returns:
         list of market data dicts
     """
-    # 转换日期格式
-    start_dt = start_date.replace("-", "")
-    end_dt = end_date.replace("-", "")
+    print(f"[数据获取] ===== 开始获取资产数据 =====")
+    print(f"[数据获取] 资产代码: {code}")
+    print(f"[数据获取] 资产类型: {asset_type}")
+    print(f"[数据获取] 日期范围: {start_date} 至 {end_date}")
     
     df = None
     if asset_type == "stock":
         df = fetch_stock_data(code, start_date, end_date)
     elif asset_type == "fund":
         df = fetch_fund_data(code, start_date, end_date)
+    else:
+        print(f"[数据获取] 错误: 不支持的资产类型: {asset_type}")
+        return []
     # 其他类型待实现
     # elif asset_type == "futures":
     #     df = fetch_futures_data(code, start_date, end_date)
@@ -172,6 +224,11 @@ def fetch_asset_data(
     #     df = fetch_forex_data(code, start_date, end_date)
     
     if df is None:
+        print(f"[数据获取] ===== 未获取到数据，返回空列表 =====")
         return []
     
-    return parse_market_data(df, asset_type, code)
+    print(f"[数据获取] 开始解析市场数据...")
+    result = parse_market_data(df, asset_type, code)
+    print(f"[数据获取] ===== 成功解析 {len(result)} 条数据 =====")
+    
+    return result

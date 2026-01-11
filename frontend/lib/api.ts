@@ -27,8 +27,45 @@ async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> 
   })
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: '请求失败' }))
-    throw new Error(error.message || error.detail || '请求失败')
+    let errorMessage = '请求失败'
+    try {
+      const errorData = await response.json()
+      // 处理各种错误格式
+      if (typeof errorData === 'string') {
+        errorMessage = errorData
+      } else if (errorData?.message) {
+        errorMessage = errorData.message
+      } else if (errorData?.detail) {
+        // FastAPI 错误格式
+        if (typeof errorData.detail === 'string') {
+          errorMessage = errorData.detail
+        } else if (Array.isArray(errorData.detail)) {
+          // FastAPI 验证错误格式
+          errorMessage = errorData.detail.map((e: any) => 
+            `${e.loc?.join('.')}: ${e.msg}`
+          ).join(', ')
+        } else {
+          errorMessage = JSON.stringify(errorData.detail)
+        }
+      } else if (errorData?.error) {
+        errorMessage = errorData.error
+      } else {
+        // 尝试序列化整个错误对象
+        errorMessage = JSON.stringify(errorData)
+      }
+    } catch (e) {
+      // 如果 JSON 解析失败，尝试获取文本
+      try {
+        const text = await response.text()
+        errorMessage = text || `HTTP ${response.status}: ${response.statusText}`
+      } catch {
+        errorMessage = `HTTP ${response.status}: ${response.statusText}`
+      }
+    }
+    const error = new Error(errorMessage)
+    ;(error as any).status = response.status
+    ;(error as any).response = response
+    throw error
   }
 
   return response.json()

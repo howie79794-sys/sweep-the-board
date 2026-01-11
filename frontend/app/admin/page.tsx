@@ -62,10 +62,27 @@ export default function AdminPage() {
       setLoading(true)
       setError(null)
       const result = await dataAPI.update()
-      alert(`数据更新完成：${result.message || "成功"}`)
+      // 构建详细的消息
+      let message = result.message || "数据更新完成"
+      if (result.total !== undefined) {
+        message += `\n总计: ${result.total}，成功: ${result.success}，失败: ${result.failed}`
+        if (result.details && result.details.length > 0) {
+          const failedDetails = result.details
+            .filter((d: any) => !d.result?.success)
+            .map((d: any) => `${d.asset_name}: ${d.result?.message || "失败"}`)
+          if (failedDetails.length > 0) {
+            message += `\n\n失败详情:\n${failedDetails.join('\n')}`
+          }
+        }
+      }
+      alert(message)
       loadAssets()
     } catch (err: any) {
-      setError(err.message || "更新数据失败")
+      // 确保显示真实的错误信息
+      const errorMsg = err?.message || err?.toString() || "更新数据失败"
+      console.error("更新数据错误:", err)
+      setError(errorMsg)
+      alert(`更新数据失败: ${errorMsg}`)
     } finally {
       setLoading(false)
     }
