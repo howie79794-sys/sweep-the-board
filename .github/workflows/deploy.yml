@@ -51,9 +51,6 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_USERNAME: ${{ secrets.HF_USERNAME }}
-          HF_SPACE: ${{ secrets.HF_SPACE || 'cooldown-leaderboard' }}
+          HF_SPACE: ${{ secrets.HF_SPACE }}
         run: |
-          # 注意：部署脚本不应该覆盖现有的数据库和头像文件
-          # 这些文件应该在持久化存储中，不会被git覆盖
-          echo "Deployment configuration needed"
-          echo "确保 data/database.db 和 data/avatars/ 不会被覆盖"
+          git push --force https://$HF_USERNAME:$HF_TOKEN@huggingface.co/spaces/$HF_USERNAME/$HF_SPACE main
