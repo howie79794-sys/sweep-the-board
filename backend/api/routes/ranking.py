@@ -19,31 +19,60 @@ async def get_rankings(
     ranking_date: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """获取当前排名（支持按资产/用户排名，包含涨跌幅）"""
-    # 如果没有指定日期，使用最新排名日期
+    """获取当前排名（支持按资产/用户排名，包含涨跌幅，即使缺少基准价也返回）"""
+    from datetime import date as date_type
+    
+    # 如果没有指定日期，使用最新排名日期，如果没有排名则使用今天
     if ranking_date:
-        target_date = date.fromisoformat(ranking_date)
+        target_date = date_type.fromisoformat(ranking_date)
     else:
         latest_ranking = db.query(func.max(Ranking.date)).scalar()
         if not latest_ranking:
-            return {"asset_rankings": [], "user_rankings": [], "date": None}
-        target_date = latest_ranking
+            # 如果没有排名数据，返回所有资产和用户的实时数据
+            target_date = date_type.today()
+        else:
+            target_date = latest_ranking
     
-    # 获取资产排名
-    asset_rankings = db.query(Ranking).filter(
+    # 获取资产排名（包含有排名和没有排名的）
+    asset_rankings_query = db.query(Ranking).filter(
         Ranking.date == target_date,
         Ranking.rank_type == "asset_rank"
-    ).order_by(Ranking.asset_rank.asc()).all()
+    )
     
-    # 获取用户排名
-    user_rankings = db.query(Ranking).filter(
+    # 先按有排名的排序，然后是没有排名的
+    asset_rankings = asset_rankings_query.order_by(
+        Ranking.asset_rank.asc().nullslast()
+    ).all()
+    
+    # 获取用户排名（包含有排名和没有排名的）
+    user_rankings_query = db.query(Ranking).filter(
         Ranking.date == target_date,
         Ranking.rank_type == "user_rank"
-    ).order_by(Ranking.user_rank.asc()).all()
+    )
     
-    # 加载关联数据
+    # 去重，每个用户只返回一条（取第一个）
+    user_rankings_all = user_rankings_query.order_by(
+        Ranking.user_rank.asc().nullslast()
+    ).all()
+    
+    # 去重处理：每个用户只保留一条记录
+    seen_users = set()
+    user_rankings = []
+    for ranking in user_rankings_all:
+        if ranking.user_id not in seen_users:
+            user_rankings.append(ranking)
+            seen_users.add(ranking.user_id)
+    
+    # 加载关联数据，并获取当前价格
     asset_results = []
     for ranking in asset_rankings:
+        # 获取最新市场数据（用于显示当前价格）
+        latest_market_data = db.query(MarketData).filter(
+            MarketData.asset_id == ranking.asset_id
+        ).order_by(MarketData.date.desc()).first()
+        
+        current_price = latest_market_data.close_price if latest_market_data else None
+        
         asset_results.append({
             "id": ranking.id,
             "date": ranking.date.isoformat(),
@@ -52,6 +81,7 @@ async def get_rankings(
             "asset_rank": ranking.asset_rank,
             "user_rank": ranking.user_rank,
             "change_rate": ranking.change_rate,
+            "current_price": current_price,
             "rank_type": ranking.rank_type,
             "created_at": ranking.created_at.isoformat() if ranking.created_at else None,
             "asset": {

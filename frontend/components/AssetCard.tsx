@@ -9,6 +9,7 @@ interface AssetCardProps {
   asset: Asset & { user?: { id: number; name: string; avatar_url?: string } }
   rank?: number
   changeRate?: number
+  currentPrice?: number
   highlight?: boolean
   className?: string
 }
@@ -24,6 +25,7 @@ export function AssetCard({
   asset,
   rank,
   changeRate,
+  currentPrice,
   highlight = false,
   className,
 }: AssetCardProps) {
@@ -78,23 +80,42 @@ export function AssetCard({
             </div>
           </div>
         </div>
-        {changeRate !== undefined && (
-          <div className="text-right">
-            <div
-              className={cn(
-                "text-2xl font-bold",
-                changeRate >= 0 ? "text-green-600" : "text-red-600"
-              )}
-            >
-              {formatPercent(changeRate)}
-            </div>
-            {highlight && (
-              <div className="text-sm text-yellow-600 font-semibold mt-1">
-                当日冠军 🏆
+        <div className="text-right">
+          {changeRate !== undefined && changeRate !== null ? (
+            <>
+              <div
+                className={cn(
+                  "text-2xl font-bold",
+                  changeRate >= 0 ? "text-green-600" : "text-red-600"
+                )}
+              >
+                {formatPercent(changeRate)}
               </div>
-            )}
-          </div>
-        )}
+              {highlight && (
+                <div className="text-sm text-yellow-600 font-semibold mt-1">
+                  当日冠军 🏆
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              {currentPrice !== undefined && currentPrice !== null ? (
+                <>
+                  <div className="text-xl font-semibold text-foreground">
+                    {formatNumber(currentPrice)}
+                  </div>
+                  <div className="text-sm text-muted-foreground mt-1">
+                    缺少基准价
+                  </div>
+                </>
+              ) : (
+                <div className="text-sm text-muted-foreground">
+                  计算中...
+                </div>
+              )}
+            </>
+          )}
+        </div>
       </div>
     </div>
   )

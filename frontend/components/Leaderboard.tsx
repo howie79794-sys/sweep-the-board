@@ -111,8 +111,9 @@ export function Leaderboard({ className }: LeaderboardProps) {
                     user: ranking.user,
                   }}
                   rank={ranking.asset_rank || undefined}
-                  changeRate={ranking.change_rate || undefined}
-                  highlight={index === 0}
+                  changeRate={ranking.change_rate ?? undefined}
+                  currentPrice={(ranking as any).current_price ?? undefined}
+                  highlight={index === 0 && ranking.asset_rank !== null && ranking.asset_rank !== undefined}
                 />
               ))}
             </div>
