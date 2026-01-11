@@ -21,11 +21,11 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 MAX_UPLOAD_SIZE = 5 * 1024 * 1024  # 5MB
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
-# CORS配置
-CORS_ORIGINS = [
-    "http://localhost:3000",
-    "http://localhost:3001",
-]
+# CORS配置 - 允许所有来源（在生产环境中更灵活）
+CORS_ORIGINS = os.getenv(
+    "CORS_ORIGINS",
+    "*"  # 在生产环境中允许所有来源，或使用环境变量配置
+).split(",") if "," in os.getenv("CORS_ORIGINS", "*") else ["*"]
 
 # 基准日期
 BASELINE_DATE = "2026-01-05"

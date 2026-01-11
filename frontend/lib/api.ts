@@ -1,8 +1,23 @@
 /** API调用封装 */
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+// 在浏览器环境中，使用相对路径（通过Next.js rewrites代理）
+// 在服务器端渲染时，使用环境变量或默认值
+const getAPIBaseURL = () => {
+  if (typeof window !== 'undefined') {
+    // 浏览器环境：使用相对路径，通过Next.js rewrites代理到后端
+    return ''
+  }
+  // 服务器端渲染：使用环境变量或默认值
+  return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+}
+
+const API_BASE_URL = getAPIBaseURL()
 
 async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> {
-  const url = `${API_BASE_URL}${endpoint}`
+  // 如果是相对路径，直接使用；如果是绝对路径，使用API_BASE_URL
+  const url = endpoint.startsWith('http') 
+    ? endpoint 
+    : `${API_BASE_URL}${endpoint}`
+  
   const response = await fetch(url, {
     ...options,
     headers: {
@@ -37,7 +52,10 @@ export const userAPI = {
   uploadAvatar: async (id: number, file: File) => {
     const formData = new FormData()
     formData.append('file', file)
-    const response = await fetch(`${API_BASE_URL}/api/users/${id}/avatar`, {
+    const url = typeof window !== 'undefined'
+      ? `/api/users/${id}/avatar`
+      : `${API_BASE_URL}/api/users/${id}/avatar`
+    const response = await fetch(url, {
       method: 'POST',
       body: formData,
     })
