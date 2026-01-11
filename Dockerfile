@@ -14,7 +14,8 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 
 # 复制后端代码和依赖
 COPY backend/requirements.txt /app/backend/
-RUN pip install --no-cache-dir -r backend/requirements.txt
+RUN pip install --no-cache-dir -r backend/requirements.txt && \
+    pip install --upgrade akshare
 
 # 复制所有代码
 COPY . /app/

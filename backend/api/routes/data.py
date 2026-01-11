@@ -205,14 +205,33 @@ async def trigger_update(
             return response
         else:
             print(f"[API] 更新所有资产")
-            # 更新所有资产
-            result = update_all_assets_data(db, force)
+            # 更新所有资产（外层包裹异常捕获，确保单个资产失败不会导致整个接口崩溃）
+            try:
+                result = update_all_assets_data(db, force)
+            except Exception as e:
+                print(f"[API] 错误: 批量更新资产数据时发生异常: {type(e).__name__}: {str(e)}")
+                import traceback
+                print(f"[API] 错误堆栈:\n{traceback.format_exc()}")
+                # 返回部分结果，而不是抛出异常
+                result = {
+                    "total": 0,
+                    "success": 0,
+                    "failed": 0,
+                    "details": [],
+                    "error": f"批量更新过程中发生错误: {str(e)}"
+                }
             
             print(f"[API] 开始计算排名...")
-            # 计算排名
-            today = date.today()
-            save_rankings(today, db)
-            print(f"[API] 排名计算完成")
+            # 计算排名（也包裹异常捕获）
+            try:
+                today = date.today()
+                save_rankings(today, db)
+                print(f"[API] 排名计算完成")
+            except Exception as e:
+                print(f"[API] 警告: 计算排名时发生错误: {type(e).__name__}: {str(e)}")
+                import traceback
+                print(f"[API] 错误堆栈:\n{traceback.format_exc()}")
+                # 排名计算失败不影响数据更新结果
             
             response = {
                 "message": "所有资产数据更新完成",
@@ -223,7 +242,7 @@ async def trigger_update(
     except Exception as e:
         print(f"[API] 错误: 数据更新请求处理失败: {type(e).__name__}: {str(e)}")
         import traceback
-        print(f"[API] 错误堆栈:\n{traceback.format_exc()}")
+        print(f"[API] 完整错误堆栈:\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"数据更新失败: {str(e)}")
 
 

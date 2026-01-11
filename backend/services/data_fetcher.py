@@ -5,8 +5,36 @@ from datetime import date, datetime
 from typing import Optional, Dict, Any
 import json
 import time
+import traceback
+import signal
+from contextlib import contextmanager
 
 from config import BASELINE_DATE
+
+
+class TimeoutError(Exception):
+    """超时异常"""
+    pass
+
+
+@contextmanager
+def timeout(seconds):
+    """超时上下文管理器"""
+    def timeout_handler(signum, frame):
+        raise TimeoutError(f"操作超时（{seconds}秒）")
+    
+    # 设置信号处理器（仅限 Unix 系统）
+    if hasattr(signal, 'SIGALRM'):
+        old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(seconds)
+        try:
+            yield
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
+    else:
+        # Windows 系统不支持 SIGALRM，使用简单实现
+        yield
 
 
 def normalize_stock_code(code: str) -> str:
@@ -50,15 +78,44 @@ def fetch_stock_data(code: str, start_date: str, end_date: str) -> Optional[pd.D
         end_dt = end_date.replace("-", "")
         print(f"[数据获取] 标准化后的日期: start={start_dt}, end={end_dt}")
         
-        # akshare获取股票历史数据
+        # akshare获取股票历史数据（添加超时处理）
         print(f"[数据获取] 调用 akshare.stock_zh_a_hist...")
-        df = ak.stock_zh_a_hist(
-            symbol=clean_code,
-            period="daily",
-            start_date=start_dt,
-            end_date=end_dt,
-            adjust=""
-        )
+        try:
+            # 设置超时时间为 30 秒
+            # akshare 内部使用 requests，我们通过 monkey patch 来设置超时
+            import requests
+            original_get = requests.get
+            original_post = requests.post
+            
+            def patched_get(*args, **kwargs):
+                kwargs.setdefault('timeout', 30)
+                return original_get(*args, **kwargs)
+            
+            def patched_post(*args, **kwargs):
+                kwargs.setdefault('timeout', 30)
+                return original_post(*args, **kwargs)
+            
+            requests.get = patched_get
+            requests.post = patched_post
+            
+            try:
+                df = ak.stock_zh_a_hist(
+                    symbol=clean_code,
+                    period="daily",
+                    start_date=start_dt,
+                    end_date=end_dt,
+                    adjust=""
+                )
+            finally:
+                # 恢复原始函数
+                requests.get = original_get
+                requests.post = original_post
+        except TimeoutError as e:
+            print(f"[数据获取] 超时错误: {str(e)}")
+            raise
+        except Exception as e:
+            print(f"[数据获取] akshare 调用异常: {type(e).__name__}: {str(e)}")
+            raise
         
         if df is None or df.empty:
             print(f"[数据获取] 警告: 未获取到数据，返回空结果")
@@ -96,9 +153,37 @@ def fetch_fund_data(code: str, start_date: str, end_date: str) -> Optional[pd.Da
         clean_code = normalize_stock_code(code)
         print(f"[数据获取] 标准化后的代码: {clean_code}")
         
-        # akshare获取ETF历史数据
+        # akshare获取ETF历史数据（添加超时处理）
         print(f"[数据获取] 调用 akshare.fund_etf_hist_sina...")
-        df = ak.fund_etf_hist_sina(symbol=clean_code)
+        try:
+            # 设置超时时间为 30 秒
+            import requests
+            original_get = requests.get
+            original_post = requests.post
+            
+            def patched_get(*args, **kwargs):
+                kwargs.setdefault('timeout', 30)
+                return original_get(*args, **kwargs)
+            
+            def patched_post(*args, **kwargs):
+                kwargs.setdefault('timeout', 30)
+                return original_post(*args, **kwargs)
+            
+            requests.get = patched_get
+            requests.post = patched_post
+            
+            try:
+                df = ak.fund_etf_hist_sina(symbol=clean_code)
+            finally:
+                # 恢复原始函数
+                requests.get = original_get
+                requests.post = original_post
+        except TimeoutError as e:
+            print(f"[数据获取] 超时错误: {str(e)}")
+            raise
+        except Exception as e:
+            print(f"[数据获取] akshare 调用异常: {type(e).__name__}: {str(e)}")
+            raise
         
         if df is None or df.empty:
             print(f"[数据获取] 警告: 未获取到基金数据，返回空结果")
@@ -209,26 +294,32 @@ def fetch_asset_data(
     print(f"[数据获取] 资产类型: {asset_type}")
     print(f"[数据获取] 日期范围: {start_date} 至 {end_date}")
     
-    df = None
-    if asset_type == "stock":
-        df = fetch_stock_data(code, start_date, end_date)
-    elif asset_type == "fund":
-        df = fetch_fund_data(code, start_date, end_date)
-    else:
-        print(f"[数据获取] 错误: 不支持的资产类型: {asset_type}")
+    try:
+        df = None
+        if asset_type == "stock":
+            df = fetch_stock_data(code, start_date, end_date)
+        elif asset_type == "fund":
+            df = fetch_fund_data(code, start_date, end_date)
+        else:
+            print(f"[数据获取] 错误: 不支持的资产类型: {asset_type}")
+            return []
+        # 其他类型待实现
+        # elif asset_type == "futures":
+        #     df = fetch_futures_data(code, start_date, end_date)
+        # elif asset_type == "forex":
+        #     df = fetch_forex_data(code, start_date, end_date)
+        
+        if df is None:
+            print(f"[数据获取] ===== 未获取到数据，返回空列表 =====")
+            return []
+        
+        print(f"[数据获取] 开始解析市场数据...")
+        result = parse_market_data(df, asset_type, code)
+        print(f"[数据获取] ===== 成功解析 {len(result)} 条数据 =====")
+        
+        return result
+    except Exception as e:
+        print(f"[数据获取] 错误: 获取资产数据时发生异常: {type(e).__name__}: {str(e)}")
+        print(f"[数据获取] 完整错误堆栈:\n{traceback.format_exc()}")
+        # 返回空列表而不是抛出异常，让调用者可以继续处理其他资产
         return []
-    # 其他类型待实现
-    # elif asset_type == "futures":
-    #     df = fetch_futures_data(code, start_date, end_date)
-    # elif asset_type == "forex":
-    #     df = fetch_forex_data(code, start_date, end_date)
-    
-    if df is None:
-        print(f"[数据获取] ===== 未获取到数据，返回空列表 =====")
-        return []
-    
-    print(f"[数据获取] 开始解析市场数据...")
-    result = parse_market_data(df, asset_type, code)
-    print(f"[数据获取] ===== 成功解析 {len(result)} 条数据 =====")
-    
-    return result

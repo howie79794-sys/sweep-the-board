@@ -192,18 +192,35 @@ def update_all_assets_data(db: Session, force: bool = False) -> Dict:
     
     for idx, asset in enumerate(assets, 1):
         print(f"[数据更新] -------- 处理资产 {idx}/{len(assets)}: {asset.name} (ID: {asset.id}) --------")
-        result = update_asset_data(asset.id, db, force)
-        if result["success"]:
-            results["success"] += 1
-            print(f"[数据更新] ✓ 资产 {asset.name} 更新成功")
-        else:
+        try:
+            result = update_asset_data(asset.id, db, force)
+            if result["success"]:
+                results["success"] += 1
+                print(f"[数据更新] ✓ 资产 {asset.name} 更新成功")
+            else:
+                results["failed"] += 1
+                print(f"[数据更新] ✗ 资产 {asset.name} 更新失败: {result.get('message', '未知错误')}")
+            results["details"].append({
+                "asset_id": asset.id,
+                "asset_name": asset.name,
+                "result": result
+            })
+        except Exception as e:
+            # 单个资产失败不应该导致整个批量更新崩溃
             results["failed"] += 1
-            print(f"[数据更新] ✗ 资产 {asset.name} 更新失败: {result.get('message', '未知错误')}")
-        results["details"].append({
-            "asset_id": asset.id,
-            "asset_name": asset.name,
-            "result": result
-        })
+            error_msg = f"处理资产时发生异常: {type(e).__name__}: {str(e)}"
+            print(f"[数据更新] ✗ 资产 {asset.name} 处理异常: {error_msg}")
+            import traceback
+            print(f"[数据更新] 完整错误堆栈:\n{traceback.format_exc()}")
+            results["details"].append({
+                "asset_id": asset.id,
+                "asset_name": asset.name,
+                "result": {
+                    "success": False,
+                    "message": error_msg,
+                    "stored_count": 0
+                }
+            })
     
     print(f"[数据更新] ========== 批量更新完成: 总计={results['total']}, 成功={results['success']}, 失败={results['failed']} ==========")
     return results
