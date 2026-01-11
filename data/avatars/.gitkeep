@@ -1,0 +1,2 @@
+# 此文件用于确保 avatars 目录被 Git 跟踪
+# 用户上传的头像文件不会被 Git 跟踪（已添加到 .gitignore）

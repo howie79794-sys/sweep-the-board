@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+.next/
+out/
+.vercel
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# 用户数据和数据库（重要：不要提交到git）
+data/database.db
+data/database.db-journal
+data/database.db-wal
+data/database.db-shm
+data/avatars/*
+!data/avatars/.gitkeep
+
+# 环境变量
+.env
+.env.local
+.env.production
+.env.development
+
+# 日志
+*.log
+logs/
+
+# 临时文件
+*.tmp
+*.temp
+/tmp/
+
+# Hugging Face
+.huggingface/
+huggingface_cache/
+
+# 其他
+*.bak
+*.backup
