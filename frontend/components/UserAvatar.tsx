@@ -28,7 +28,7 @@ export function UserAvatar({ user, size = "md", className }: UserAvatarProps) {
   const avatarUrl = user.avatar_url
     ? user.avatar_url.startsWith("http")
       ? user.avatar_url
-      : `http://localhost:8000${user.avatar_url}`
+      : user.avatar_url  // 使用相对路径，通过Next.js代理或直接访问
     : null
 
   return (

@@ -23,20 +23,26 @@ PYTHONPATH=/app/backend uvicorn api.main:app --host 0.0.0.0 --port 8000 &
 BACKEND_PID=$!
 
 # 等待后端启动
-sleep 3
+sleep 5
 
-# 检查后端是否启动成功
-if ! curl -s http://localhost:8000/api/health > /dev/null; then
-    echo "❌ 后端启动失败"
-    exit 1
-fi
-
-echo "✅ 后端启动成功"
+# 检查后端是否启动成功（最多重试3次）
+for i in {1..3}; do
+    if curl -s http://localhost:8000/api/health > /dev/null; then
+        echo "✅ 后端启动成功"
+        break
+    fi
+    if [ $i -eq 3 ]; then
+        echo "❌ 后端启动失败，尝试继续..."
+    else
+        echo "⏳ 等待后端启动... ($i/3)"
+        sleep 2
+    fi
+done
 
 # 启动前端 Next.js（前台运行，端口 7860，Hugging Face 标准端口）
 echo "🎨 启动前端服务 (端口 7860)..."
 cd /app/frontend
-PORT=7860 npm run start &
+PORT=7860 HOSTNAME=0.0.0.0 npm run start &
 FRONTEND_PID=$!
 
 # 等待前端启动
