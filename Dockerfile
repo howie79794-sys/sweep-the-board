@@ -22,7 +22,7 @@ COPY . /app/
 # 安装前端依赖
 RUN cd frontend && npm install
 
-# 构建前端
+# 构建前端（不使用standalone模式，以支持rewrites）
 RUN cd frontend && npm run build
 
 # 设置Python路径

@@ -9,12 +9,10 @@ echo "🚀 启动 CoolDown龙虎榜服务..."
 mkdir -p /app/data/avatars
 mkdir -p /app/data
 
-# 初始化数据库（如果需要）
+# 初始化数据库（确保表结构存在，如果数据库为空则初始化数据）
 cd /app/backend
-if [ ! -f /app/data/database.db ]; then
-    echo "📦 初始化数据库..."
-    PYTHONPATH=/app/backend python3 -m database.init_db || true
-fi
+echo "📦 初始化数据库（确保表结构存在）..."
+PYTHONPATH=/app/backend python3 -m database.init_db || true
 
 # 启动后端 FastAPI（后台运行，端口 8000）
 echo "🔧 启动后端 API (端口 8000)..."

@@ -12,6 +12,16 @@ export default function AdminPage() {
   const [assets, setAssets] = useState<Asset[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showUserDialog, setShowUserDialog] = useState(false)
+  const [showAssetDialog, setShowAssetDialog] = useState(false)
+  const [userForm, setUserForm] = useState({ name: "" })
+  const [assetForm, setAssetForm] = useState({
+    user_id: "",
+    asset_type: "stock",
+    market: "",
+    code: "",
+    name: "",
+  })
 
   useEffect(() => {
     if (activeTab === "users") {
@@ -56,6 +66,79 @@ export default function AdminPage() {
       loadAssets()
     } catch (err: any) {
       setError(err.message || "更新数据失败")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleCreateUser = async () => {
+    if (!userForm.name.trim()) {
+      setError("用户名不能为空")
+      return
+    }
+    try {
+      setLoading(true)
+      setError(null)
+      await userAPI.create({ name: userForm.name.trim() })
+      setShowUserDialog(false)
+      setUserForm({ name: "" })
+      await loadUsers()
+    } catch (err: any) {
+      setError(err.message || "创建用户失败")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleDeleteUser = async (id: number) => {
+    if (!confirm("确定要删除这个用户吗？")) return
+    try {
+      setLoading(true)
+      setError(null)
+      await userAPI.delete(id)
+      await loadUsers()
+      await loadAssets() // 重新加载资产列表
+    } catch (err: any) {
+      setError(err.message || "删除用户失败")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleCreateAsset = async () => {
+    if (!assetForm.user_id || !assetForm.market.trim() || !assetForm.code.trim() || !assetForm.name.trim()) {
+      setError("请填写所有必填字段")
+      return
+    }
+    try {
+      setLoading(true)
+      setError(null)
+      await assetAPI.create({
+        user_id: parseInt(assetForm.user_id),
+        asset_type: assetForm.asset_type,
+        market: assetForm.market.trim(),
+        code: assetForm.code.trim(),
+        name: assetForm.name.trim(),
+      })
+      setShowAssetDialog(false)
+      setAssetForm({ user_id: "", asset_type: "stock", market: "", code: "", name: "" })
+      await loadAssets()
+    } catch (err: any) {
+      setError(err.message || "创建资产失败")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleDeleteAsset = async (id: number) => {
+    if (!confirm("确定要删除这个资产吗？")) return
+    try {
+      setLoading(true)
+      setError(null)
+      await assetAPI.delete(id)
+      await loadAssets()
+    } catch (err: any) {
+      setError(err.message || "删除资产失败")
     } finally {
       setLoading(false)
     }
@@ -116,10 +199,55 @@ export default function AdminPage() {
         <div>
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-2xl font-bold">用户列表</h2>
-            <button className="px-4 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90">
+            <button
+              onClick={() => setShowUserDialog(true)}
+              className="px-4 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90"
+            >
               添加用户
             </button>
           </div>
+          
+          {/* 添加用户对话框 */}
+          {showUserDialog && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+              <div className="bg-background border rounded-lg p-6 w-full max-w-md">
+                <h3 className="text-xl font-bold mb-4">添加用户</h3>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-2">用户名</label>
+                    <input
+                      type="text"
+                      value={userForm.name}
+                      onChange={(e) => setUserForm({ name: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-md"
+                      placeholder="请输入用户名"
+                      autoFocus
+                    />
+                  </div>
+                  <div className="flex gap-2 justify-end">
+                    <button
+                      onClick={() => {
+                        setShowUserDialog(false)
+                        setUserForm({ name: "" })
+                        setError(null)
+                      }}
+                      className="px-4 py-2 border rounded hover:bg-secondary"
+                      disabled={loading}
+                    >
+                      取消
+                    </button>
+                    <button
+                      onClick={handleCreateUser}
+                      className="px-4 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50"
+                      disabled={loading}
+                    >
+                      {loading ? "创建中..." : "创建"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
           {loading ? (
             <div className="text-center py-12">
               <p className="text-muted-foreground">加载中...</p>
@@ -141,10 +269,11 @@ export default function AdminPage() {
                     </div>
                   </div>
                   <div className="flex gap-2">
-                    <button className="px-4 py-2 border rounded hover:bg-secondary">
-                      编辑
-                    </button>
-                    <button className="px-4 py-2 border rounded hover:bg-destructive/10 text-destructive">
+                    <button
+                      onClick={() => handleDeleteUser(user.id)}
+                      className="px-4 py-2 border rounded hover:bg-destructive/10 text-destructive disabled:opacity-50"
+                      disabled={loading}
+                    >
                       删除
                     </button>
                   </div>
@@ -160,10 +289,102 @@ export default function AdminPage() {
         <div>
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-2xl font-bold">资产列表</h2>
-            <button className="px-4 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90">
+            <button
+              onClick={() => setShowAssetDialog(true)}
+              className="px-4 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90"
+            >
               添加资产
             </button>
           </div>
+          
+          {/* 添加资产对话框 */}
+          {showAssetDialog && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+              <div className="bg-background border rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
+                <h3 className="text-xl font-bold mb-4">添加资产</h3>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-2">用户</label>
+                    <select
+                      value={assetForm.user_id}
+                      onChange={(e) => setAssetForm({ ...assetForm, user_id: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-md"
+                    >
+                      <option value="">请选择用户</option>
+                      {users.map((user) => (
+                        <option key={user.id} value={user.id}>
+                          {user.name} (ID: {user.id})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-2">资产类型</label>
+                    <select
+                      value={assetForm.asset_type}
+                      onChange={(e) => setAssetForm({ ...assetForm, asset_type: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-md"
+                    >
+                      <option value="stock">股票</option>
+                      <option value="fund">基金</option>
+                      <option value="futures">期货</option>
+                      <option value="forex">外汇</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-2">市场</label>
+                    <input
+                      type="text"
+                      value={assetForm.market}
+                      onChange={(e) => setAssetForm({ ...assetForm, market: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-md"
+                      placeholder="例如：上海、深圳"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-2">代码</label>
+                    <input
+                      type="text"
+                      value={assetForm.code}
+                      onChange={(e) => setAssetForm({ ...assetForm, code: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-md"
+                      placeholder="例如：600580"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-2">名称</label>
+                    <input
+                      type="text"
+                      value={assetForm.name}
+                      onChange={(e) => setAssetForm({ ...assetForm, name: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-md"
+                      placeholder="例如：卧龙电驱"
+                    />
+                  </div>
+                  <div className="flex gap-2 justify-end">
+                    <button
+                      onClick={() => {
+                        setShowAssetDialog(false)
+                        setAssetForm({ user_id: "", asset_type: "stock", market: "", code: "", name: "" })
+                        setError(null)
+                      }}
+                      className="px-4 py-2 border rounded hover:bg-secondary"
+                      disabled={loading}
+                    >
+                      取消
+                    </button>
+                    <button
+                      onClick={handleCreateAsset}
+                      className="px-4 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50"
+                      disabled={loading}
+                    >
+                      {loading ? "创建中..." : "创建"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
           {loading ? (
             <div className="text-center py-12">
               <p className="text-muted-foreground">加载中...</p>
@@ -186,10 +407,11 @@ export default function AdminPage() {
                       </div>
                     </div>
                     <div className="flex gap-2">
-                      <button className="px-4 py-2 border rounded hover:bg-secondary">
-                        编辑
-                      </button>
-                      <button className="px-4 py-2 border rounded hover:bg-destructive/10 text-destructive">
+                      <button
+                        onClick={() => handleDeleteAsset(asset.id)}
+                        className="px-4 py-2 border rounded hover:bg-destructive/10 text-destructive disabled:opacity-50"
+                        disabled={loading}
+                      >
                         删除
                       </button>
                     </div>
