@@ -122,9 +122,54 @@ def fetch_stock_data(code: str, start_date: str, end_date: str) -> Optional[pd.D
             return None
         
         print(f"[数据获取] 成功获取 {len(df)} 条数据")
+        print(f"[数据获取] 数据列数: {len(df.columns)}, 列名: {list(df.columns)}")
         
-        # 重命名列
-        df.columns = ['date', 'open', 'close', 'high', 'low', 'volume', 'turnover', 'amplitude', 'change_pct', 'change_amount', 'turnover_rate']
+        # 动态重命名列（兼容 11 列或 12 列的情况）
+        # AkShare 返回的列名映射（根据实际返回的列名进行映射）
+        column_mapping = {}
+        
+        # 检查并映射我们需要的列
+        # 常见的 AkShare 列名（可能因版本而异）
+        possible_column_names = {
+            'date': ['日期', 'date', '交易日期'],
+            'open': ['开盘', 'open', '开盘价'],
+            'close': ['收盘', 'close', '收盘价'],
+            'high': ['最高', 'high', '最高价'],
+            'low': ['最低', 'low', '最低价'],
+            'volume': ['成交量', 'volume', '成交额'],
+            'turnover': ['成交额', 'turnover', '成交金额'],
+            'amplitude': ['振幅', 'amplitude', '涨跌幅'],
+            'change_pct': ['涨跌幅', 'change_pct', '涨跌幅度', '涨跌%'],
+            'change_amount': ['涨跌额', 'change_amount', '涨跌金额'],
+            'turnover_rate': ['换手率', 'turnover_rate', '换手']
+        }
+        
+        # 动态匹配列名
+        for target_col, possible_names in possible_column_names.items():
+            for col in df.columns:
+                if str(col).strip() in possible_names or str(col).strip().lower() == target_col.lower():
+                    column_mapping[col] = target_col
+                    break
+        
+        # 使用 rename 只重命名匹配到的列，保留其他列不变
+        if column_mapping:
+            df = df.rename(columns=column_mapping)
+            print(f"[数据获取] 列名映射完成: {column_mapping}")
+        else:
+            # 如果没有匹配到，尝试按位置映射（兼容旧版本）
+            print(f"[数据获取] 警告: 未找到匹配的列名，尝试按位置映射")
+            if len(df.columns) >= 11:
+                # 如果列数足够，尝试按位置映射前 11 列
+                expected_columns = ['date', 'open', 'close', 'high', 'low', 'volume', 'turnover', 'amplitude', 'change_pct', 'change_amount', 'turnover_rate']
+                position_mapping = {}
+                for i, expected_col in enumerate(expected_columns):
+                    if i < len(df.columns):
+                        position_mapping[df.columns[i]] = expected_col
+                if position_mapping:
+                    df = df.rename(columns=position_mapping)
+                    print(f"[数据获取] 按位置映射列名: {position_mapping}")
+        
+        print(f"[数据获取] 最终列名: {list(df.columns)}")
         
         return df
     except Exception as e:
