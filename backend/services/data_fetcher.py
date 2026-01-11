@@ -1,4 +1,4 @@
-"""数据获取服务（akshare集成）"""
+"""数据获取服务（akshare集成，yfinance作为备用）"""
 import akshare as ak
 import pandas as pd
 from datetime import date, datetime
@@ -7,7 +7,15 @@ import json
 import time
 import traceback
 import signal
+import random
 from contextlib import contextmanager
+
+try:
+    import yfinance as yf
+    YFINANCE_AVAILABLE = True
+except ImportError:
+    YFINANCE_AVAILABLE = False
+    print("[数据获取] 警告: yfinance 未安装，将无法使用备用数据源")
 
 from config import BASELINE_DATE
 
@@ -52,6 +60,90 @@ def normalize_stock_code(code: str) -> str:
     # 去掉市场前缀 (SH, SZ)
     code = code.replace("SH", "").replace("SZ", "")
     return code
+
+
+def convert_to_yfinance_symbol(code: str) -> str:
+    """
+    将A股代码转换为 yfinance 格式
+    yfinance 使用 .SS (上海) 或 .SZ (深圳) 后缀
+    """
+    clean_code = normalize_stock_code(code)
+    if clean_code.startswith('6'):
+        return f"{clean_code}.SS"  # 上海市场
+    elif clean_code.startswith(('0', '3')):
+        return f"{clean_code}.SZ"  # 深圳市场
+    else:
+        # 默认尝试上海市场
+        return f"{clean_code}.SS"
+
+
+def fetch_stock_data_yfinance(code: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
+    """
+    使用 yfinance 获取A股股票数据（备用数据源）
+    
+    Args:
+        code: 股票代码
+        start_date: 开始日期 "YYYY-MM-DD"
+        end_date: 结束日期 "YYYY-MM-DD"
+    """
+    if not YFINANCE_AVAILABLE:
+        print(f"[数据获取] yfinance 不可用，跳过备用数据源")
+        return None
+    
+    try:
+        print(f"[数据获取] 尝试使用 yfinance 备用数据源: code={code}")
+        
+        # 转换为 yfinance 格式
+        symbol = convert_to_yfinance_symbol(code)
+        print(f"[数据获取] yfinance 符号: {symbol}")
+        
+        # 使用 yfinance 获取数据
+        ticker = yf.Ticker(symbol)
+        df = ticker.history(start=start_date, end=end_date)
+        
+        if df is None or df.empty:
+            print(f"[数据获取] yfinance 未获取到数据")
+            return None
+        
+        print(f"[数据获取] yfinance 成功获取 {len(df)} 条数据")
+        
+        # 转换列名以匹配我们的格式
+        df = df.reset_index()
+        
+        # 重命名列
+        column_mapping = {
+            'Date': 'date',
+            'Open': 'open',
+            'High': 'high',
+            'Low': 'low',
+            'Close': 'close',
+            'Volume': 'volume'
+        }
+        
+        df = df.rename(columns=column_mapping)
+        
+        # 计算需要的列
+        if 'date' in df.columns:
+            df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
+        
+        # 添加缺失的列（使用默认值）
+        expected_cols = ['date', 'open', 'close', 'high', 'low', 'volume', 'turnover', 'amplitude', 'change_pct', 'change_amount', 'turnover_rate']
+        for col in expected_cols:
+            if col not in df.columns:
+                df[col] = None
+        
+        # 只取需要的列
+        df = df[expected_cols] if len(df.columns) >= len(expected_cols) else df.iloc[:, :len(expected_cols)]
+        df.columns = expected_cols
+        
+        print(f"[数据获取] yfinance 数据处理完成")
+        return df
+        
+    except Exception as e:
+        print(f"[数据获取] yfinance 获取数据失败: {type(e).__name__}: {str(e)}")
+        import traceback
+        print(f"[数据获取] yfinance 错误堆栈:\n{traceback.format_exc()}")
+        return None
 
 
 def fetch_stock_data(code: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
@@ -175,8 +267,12 @@ def fetch_stock_data(code: str, start_date: str, end_date: str) -> Optional[pd.D
                     continue
         
         if df is None or df.empty:
-            print(f"[数据获取] 警告: 所有代码变体都未获取到数据，返回空结果")
-            return None
+            print(f"[数据获取] 警告: AkShare 所有代码变体都未获取到数据，尝试备用数据源 yfinance...")
+            # 尝试使用 yfinance 备用数据源
+            df = fetch_stock_data_yfinance(code, start_date, end_date)
+            if df is None or df.empty:
+                print(f"[数据获取] 警告: 所有数据源都未获取到数据，返回空结果")
+                return None
         
         print(f"[数据获取] 成功获取 {len(df)} 条数据")
         print(f"[数据获取] 数据列数: {len(df.columns)}, 列名: {list(df.columns)}")

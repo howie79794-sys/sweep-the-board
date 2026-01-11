@@ -10,3 +10,4 @@ pandas==2.2.3
 numpy==2.0.2
 Pillow==10.4.0
 requests>=2.31.0
+yfinance>=0.2.28

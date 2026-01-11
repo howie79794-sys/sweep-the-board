@@ -5,9 +5,21 @@ set -e
 
 echo "🚀 启动 CoolDown龙虎榜服务..."
 
-# 创建数据目录
+# 创建数据目录（如果使用 Persistent Storage，数据会保存在持久化卷中）
 mkdir -p /app/data/avatars
 mkdir -p /app/data
+
+# 检查数据库路径和持久化状态
+echo "📁 检查数据库持久化配置..."
+DB_PATH="/app/data/database.db"
+if [ -f "$DB_PATH" ]; then
+    DB_SIZE=$(du -h "$DB_PATH" | cut -f1)
+    echo "   ✓ 数据库文件存在: $DB_PATH (大小: $DB_SIZE)"
+else
+    echo "   ⚠️  数据库文件不存在，将在初始化时创建: $DB_PATH"
+fi
+echo "   📌 重要提示: 在 Hugging Face Spaces 中，请确保开启 Persistent Storage"
+echo "   📌 持久化路径: /app/data/ (包含 database.db 和 avatars/)"
 
 # 初始化数据库（确保表结构存在，如果数据库为空则初始化数据）
 cd /app/backend

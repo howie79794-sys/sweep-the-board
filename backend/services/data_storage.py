@@ -3,6 +3,8 @@ from sqlalchemy.orm import Session
 from datetime import date
 from typing import List, Dict, Optional
 import json
+import time
+import random
 
 from models.asset import Asset
 from models.market_data import MarketData
@@ -121,6 +123,21 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
     
     print(f"[数据更新] 资产配置的日期范围: {start_date} 至 {end_date}")
     
+    # 检查基准日期数据是否存在
+    from config import BASELINE_DATE
+    from datetime import date as date_type
+    baseline_date_obj = date_type.fromisoformat(BASELINE_DATE) if isinstance(BASELINE_DATE, str) else BASELINE_DATE
+    
+    baseline_data = db.query(MarketData).filter(
+        MarketData.asset_id == asset_id,
+        MarketData.date == baseline_date_obj
+    ).first()
+    
+    need_baseline = False
+    if not baseline_data:
+        print(f"[数据更新] 警告: 缺少基准日期 {BASELINE_DATE} 的数据，需要补全")
+        need_baseline = True
+    
     # 如果不需要强制更新，检查最新数据日期
     if not force:
         latest_data = db.query(MarketData).filter(
@@ -136,6 +153,22 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
             print(f"[数据更新] 未检测到已有数据，将从配置的开始日期更新")
     else:
         print(f"[数据更新] 强制更新模式，将更新整个日期范围")
+    
+    # 如果需要补全基准数据，先获取基准日期的数据
+    baseline_stored_count = 0
+    if need_baseline:
+        print(f"[数据更新] 补全基准日期 {BASELINE_DATE} 的数据...")
+        baseline_data_list = fetch_asset_data(
+            code=asset.code,
+            asset_type=asset.asset_type,
+            start_date=BASELINE_DATE,
+            end_date=BASELINE_DATE
+        )
+        if baseline_data_list:
+            baseline_stored_count = store_market_data(asset_id, baseline_data_list, db)
+            print(f"[数据更新] 基准日期数据补全完成，存储了 {baseline_stored_count} 条数据")
+        else:
+            print(f"[数据更新] 警告: 无法获取基准日期数据")
     
     try:
         print(f"[数据更新] 调用 fetch_asset_data 获取数据...")
@@ -156,17 +189,18 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
         print(f"[数据更新] 开始存储数据到数据库...")
         # 存储数据
         stored_count = store_market_data(asset_id, market_data_list, db)
-        print(f"[数据更新] 成功存储 {stored_count} 条数据")
+        print(f"[数据更新] 成功存储 {stored_count} 条数据（包含基准日期 {baseline_stored_count} 条）")
         
         print(f"[数据更新] 更新基准价格...")
         # 更新基准价格
         get_or_set_baseline_price(asset, db)
         
+        total_stored = stored_count + baseline_stored_count
         print(f"[数据更新] ========== 资产数据更新完成 (asset_id={asset_id}) ==========")
         return {
             "success": True,
-            "message": f"成功更新 {stored_count} 条数据",
-            "stored_count": stored_count
+            "message": f"成功更新 {total_stored} 条数据（新增 {stored_count} 条，基准日期 {baseline_stored_count} 条）",
+            "stored_count": total_stored
         }
     except Exception as e:
         print(f"[数据更新] 错误: 更新资产数据失败 (asset_id={asset_id}): {type(e).__name__}: {str(e)}")
@@ -192,6 +226,13 @@ def update_all_assets_data(db: Session, force: bool = False) -> Dict:
     
     for idx, asset in enumerate(assets, 1):
         print(f"[数据更新] -------- 处理资产 {idx}/{len(assets)}: {asset.name} (ID: {asset.id}) --------")
+        
+        # 在资产之间添加随机延迟（1-3秒），降低被封 IP 的风险
+        if idx > 1:  # 第一个资产不需要延迟
+            delay = random.uniform(1, 3)
+            print(f"[数据更新] 随机延迟 {delay:.2f} 秒，降低 IP 频率限制风险...")
+            time.sleep(delay)
+        
         try:
             result = update_asset_data(asset.id, db, force)
             if result["success"]:
