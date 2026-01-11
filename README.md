@@ -1,3 +1,12 @@
+---
+title: Sweep The Board
+emoji: 📊
+colorFrom: blue
+colorTo: green
+sdk: docker
+pinned: false
+---
+
 # CoolDown龙虎榜
 
 一个可扩展的金融资产排行榜网站，支持多用户、多资产、多市场类型，记录各种金融资产的每日数据，支持排名展示、数据可视化。
