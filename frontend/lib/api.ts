@@ -133,13 +133,27 @@ export const dataAPI = {
   },
   getLatestData: (assetId: number) => fetchAPI<any>(`/api/data/assets/${assetId}/latest`),
   getBaselinePrice: (assetId: number) => fetchAPI<any>(`/api/data/assets/${assetId}/baseline`),
-  update: (assetIds?: number[], force?: boolean) => fetchAPI<any>('/api/data/update', {
-    method: 'POST',
-    body: JSON.stringify({ 
-      asset_ids: assetIds || null, 
-      force: force ?? false 
-    }),
-  }),
+  update: (assetIds?: number[], force?: boolean) => {
+    // 构建请求体，确保格式正确
+    const requestBody: { asset_ids?: number[] | null; force: boolean } = {
+      force: force ?? false
+    }
+    
+    // 只有在 assetIds 存在且是数组时才添加
+    if (assetIds && Array.isArray(assetIds) && assetIds.length > 0) {
+      requestBody.asset_ids = assetIds
+    } else {
+      // 明确设置为 null（而不是 undefined）
+      requestBody.asset_ids = null
+    }
+    
+    console.log('[API] 发送数据更新请求:', requestBody)
+    
+    return fetchAPI<any>('/api/data/update', {
+      method: 'POST',
+      body: JSON.stringify(requestBody),
+    })
+  },
 }
 
 // 排名API

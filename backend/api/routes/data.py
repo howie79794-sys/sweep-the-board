@@ -1,8 +1,8 @@
 """数据管理路由"""
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from datetime import date, datetime
 
 from database.base import get_db
@@ -14,8 +14,20 @@ router = APIRouter()
 
 class DataUpdateRequest(BaseModel):
     """数据更新请求模型"""
-    asset_ids: Optional[List[int]] = None
-    force: bool = False
+    asset_ids: Optional[List[int]] = Field(
+        default=None,
+        description="要更新的资产ID列表，如果为null或空数组则更新所有资产"
+    )
+    force: bool = Field(default=False, description="是否强制更新（即使已有数据）")
+    
+    class Config:
+        # Pydantic v1 配置
+        json_schema_extra = {
+            "example": {
+                "asset_ids": None,
+                "force": False
+            }
+        }
 
 
 class MarketDataResponse(BaseModel):
@@ -138,22 +150,35 @@ async def get_baseline_price(asset_id: int, db: Session = Depends(get_db)):
 
 @router.post("/update")
 async def trigger_update(
-    request: DataUpdateRequest,
+    request: DataUpdateRequest = Body(..., embed=False),
     db: Session = Depends(get_db)
 ):
     """触发数据更新（支持全部或指定资产）"""
     print(f"[API] ========== 收到数据更新请求 ==========")
-    print(f"[API] 请求体: asset_ids={request.asset_ids}, force={request.force}")
+    print(f"[API] 请求体类型: {type(request)}")
+    print(f"[API] 请求体内容: asset_ids={request.asset_ids} (类型: {type(request.asset_ids)}), force={request.force}")
+    
+    # 验证请求数据
+    if request.asset_ids is not None and not isinstance(request.asset_ids, list):
+        print(f"[API] 错误: asset_ids 不是列表类型，实际类型: {type(request.asset_ids)}")
+        raise HTTPException(
+            status_code=422,
+            detail=f"asset_ids 必须是列表或 null，当前类型: {type(request.asset_ids).__name__}"
+        )
     
     from services.data_storage import update_asset_data, update_all_assets_data
     from services.ranking_calculator import save_rankings
     from datetime import date
     
-    asset_ids = request.asset_ids
+    # 处理 asset_ids：None、空列表或有效列表
+    asset_ids = request.asset_ids if request.asset_ids else None
     force = request.force
     
+    print(f"[API] 解析后的参数: asset_ids={asset_ids} (类型: {type(asset_ids)}), force={force}")
+    
     try:
-        if asset_ids:
+        # 如果 asset_ids 不为 None 且不为空列表，则更新指定资产
+        if asset_ids and len(asset_ids) > 0:
             print(f"[API] 更新指定资产: {asset_ids}")
             # 更新指定资产
             results = []
