@@ -5,23 +5,35 @@ WORKDIR /app
 # 安装系统依赖
 RUN apt-get update && apt-get install -y \
     gcc \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# 复制后端代码
+# 安装 Node.js
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs
+
+# 复制后端代码和依赖
 COPY backend/requirements.txt /app/backend/
 RUN pip install --no-cache-dir -r backend/requirements.txt
 
 # 复制所有代码
 COPY . /app/
 
+# 安装前端依赖
+RUN cd frontend && npm install
+
+# 构建前端
+RUN cd frontend && npm run build
+
 # 设置Python路径
 ENV PYTHONPATH=/app/backend
 
-# 初始化数据库
-RUN python3 -m backend.database.init_db || true
+# 复制启动脚本并设置权限
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
 
-# 暴露端口
+# 暴露端口（Hugging Face 使用 7860）
 EXPOSE 7860
 
-# 启动应用
-CMD ["python3", "app.py"]
+# 使用启动脚本
+CMD ["/app/start.sh"]

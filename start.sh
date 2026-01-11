@@ -1,0 +1,50 @@
+#!/bin/bash
+# 启动脚本：同时启动前后端服务
+
+set -e
+
+echo "🚀 启动 CoolDown龙虎榜服务..."
+
+# 创建数据目录
+mkdir -p /app/data/avatars
+mkdir -p /app/data
+
+# 初始化数据库（如果需要）
+cd /app/backend
+if [ ! -f /app/data/database.db ]; then
+    echo "📦 初始化数据库..."
+    PYTHONPATH=/app/backend python3 -m database.init_db || true
+fi
+
+# 启动后端 FastAPI（后台运行，端口 8000）
+echo "🔧 启动后端 API (端口 8000)..."
+cd /app/backend
+PYTHONPATH=/app/backend uvicorn api.main:app --host 0.0.0.0 --port 8000 &
+BACKEND_PID=$!
+
+# 等待后端启动
+sleep 3
+
+# 检查后端是否启动成功
+if ! curl -s http://localhost:8000/api/health > /dev/null; then
+    echo "❌ 后端启动失败"
+    exit 1
+fi
+
+echo "✅ 后端启动成功"
+
+# 启动前端 Next.js（前台运行，端口 7860，Hugging Face 标准端口）
+echo "🎨 启动前端服务 (端口 7860)..."
+cd /app/frontend
+PORT=7860 npm run start &
+FRONTEND_PID=$!
+
+# 等待前端启动
+sleep 5
+
+echo "✅ 服务启动完成"
+echo "   - 前端: http://localhost:7860"
+echo "   - 后端: http://localhost:8000"
+
+# 保持容器运行，等待任一进程退出
+wait

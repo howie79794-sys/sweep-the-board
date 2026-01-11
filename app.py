@@ -1,19 +1,15 @@
 """
 Hugging Face Spaces入口文件
-由于Hugging Face Spaces对Node.js支持有限，这里提供FastAPI后端服务
-前端需要静态导出或使用其他方案
+由于使用 Docker 部署，直接使用 start.sh 启动脚本
+此文件保留作为备用入口
 """
-import os
+import subprocess
 import sys
-from pathlib import Path
+import os
 
-# 添加backend目录到路径
-backend_dir = Path(__file__).parent / "backend"
-sys.path.insert(0, str(backend_dir))
+# 切换到项目根目录
+os.chdir('/app')
 
-from api.main import app
-
-# Hugging Face Spaces会自动识别app对象
+# 执行启动脚本
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=7860)
+    subprocess.run(['/app/start.sh'])
