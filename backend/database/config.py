@@ -10,10 +10,6 @@ from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
 
 # 数据库连接字符串（从环境变量读取，必须配置）
 DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    raise ValueError(
-        "DATABASE_URL 环境变量未设置。请配置 Supabase 数据库连接字符串。"
-    )
 
 
 def configure_database_url(url: str) -> str:
@@ -26,6 +22,11 @@ def configure_database_url(url: str) -> str:
     Returns:
         配置后的数据库连接URL
     """
+    if not url:
+        raise ValueError(
+            "DATABASE_URL 环境变量未设置。请配置 Supabase 数据库连接字符串。"
+        )
+    
     parsed = urlparse(url)
     query_params = parse_qs(parsed.query)
     
@@ -33,13 +34,8 @@ def configure_database_url(url: str) -> str:
     if 'sslmode' not in query_params:
         query_params['sslmode'] = ['require']
     
-    # 如果 URL 中没有端口，且是 Supabase 连接，添加 6543 端口
-    # 注意：Supabase 连接池端口是 6543，直接连接端口是 5432
-    if not parsed.port:
-        # 检查是否是 Supabase 连接
-        if 'supabase.co' in parsed.hostname or 'supabase' in parsed.hostname.lower():
-            # 使用连接池端口 6543
-            parsed = parsed._replace(netloc=f"{parsed.hostname}:6543")
+    # 注意：不要修改端口，使用原始URL中的端口
+    # Supabase 连接字符串已经包含正确的端口（5432 或 6543）
     
     # 重新构建查询字符串
     new_query = urlencode(query_params, doseq=True)
@@ -48,22 +44,61 @@ def configure_database_url(url: str) -> str:
     return configured_url
 
 
-# 配置数据库连接URL
-CONFIGURED_DATABASE_URL = configure_database_url(DATABASE_URL)
+# 延迟初始化引擎和会话工厂
+_engine = None
+_SessionLocal = None
 
-# 创建数据库引擎
-# 配置连接池参数以优化性能
-engine = create_engine(
-    CONFIGURED_DATABASE_URL,
-    echo=False,
-    pool_size=5,  # 连接池大小
-    max_overflow=10,  # 最大溢出连接数
-    pool_pre_ping=True,  # 连接前检查连接是否有效
-    pool_recycle=3600,  # 连接回收时间（秒）
-)
 
-# 创建会话工厂
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+def _get_configured_url():
+    """获取配置后的数据库URL（延迟初始化）"""
+    if not DATABASE_URL:
+        raise ValueError(
+            "DATABASE_URL 环境变量未设置。请配置 Supabase 数据库连接字符串。"
+        )
+    return configure_database_url(DATABASE_URL)
+
+
+def _init_engine():
+    """初始化数据库引擎（延迟初始化）"""
+    global _engine
+    if _engine is None:
+        configured_url = _get_configured_url()
+        _engine = create_engine(
+            configured_url,
+            echo=False,
+            pool_size=5,  # 连接池大小
+            max_overflow=10,  # 最大溢出连接数
+            pool_pre_ping=True,  # 连接前检查连接是否有效
+            pool_recycle=3600,  # 连接回收时间（秒）
+        )
+    return _engine
+
+
+def _init_session_local():
+    """初始化会话工厂（延迟初始化）"""
+    global _SessionLocal
+    if _SessionLocal is None:
+        _SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_init_engine())
+    return _SessionLocal
+
+
+# 为了向后兼容，提供 engine 和 SessionLocal
+# 使用类来模拟属性访问
+class _EngineProxy:
+    def __getattr__(self, name):
+        return getattr(_init_engine(), name)
+    
+    def __call__(self, *args, **kwargs):
+        return _init_engine()
+
+
+class _SessionLocalProxy:
+    def __call__(self, *args, **kwargs):
+        return _init_session_local()(*args, **kwargs)
+
+
+engine = _EngineProxy()
+SessionLocal = _SessionLocalProxy()
 
 # 创建声明式基类
 Base = declarative_base()
@@ -71,7 +106,7 @@ Base = declarative_base()
 
 def get_db():
     """获取数据库会话"""
-    db = SessionLocal()
+    db = _init_session_local()()
     try:
         yield db
     finally:
@@ -81,4 +116,4 @@ def get_db():
 def init_db():
     """初始化数据库表结构"""
     from database.models import User, Asset, MarketData, Ranking  # noqa: F401
-    Base.metadata.create_all(bind=engine)
+    Base.metadata.create_all(bind=_init_engine())

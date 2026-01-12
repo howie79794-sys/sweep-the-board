@@ -10,7 +10,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root / "backend"))
 
-from database.config import engine, Base, init_db
+from database.config import Base, init_db
 
 if __name__ == "__main__":
     try:
