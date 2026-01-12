@@ -5,29 +5,25 @@ set -e
 
 echo "🚀 启动 CoolDown龙虎榜服务..."
 
-# 创建数据目录（如果使用 Persistent Storage，数据会保存在持久化卷中）
+# 创建数据目录（用于头像文件存储）
 mkdir -p /app/data/avatars
-mkdir -p /app/data
 
-# 检查数据库路径和持久化状态
-echo "📁 检查数据库持久化配置..."
-DB_PATH="/app/data/database.db"
-if [ -f "$DB_PATH" ]; then
-    DB_SIZE=$(du -h "$DB_PATH" | cut -f1)
-    echo "   ✓ 数据库文件存在: $DB_PATH (大小: $DB_SIZE)"
+# 检查数据库连接配置
+echo "📁 检查数据库配置..."
+if [ -z "$DATABASE_URL" ]; then
+    echo "   ❌ 错误: DATABASE_URL 环境变量未设置"
+    echo "   📌 请配置 Supabase 数据库连接字符串"
+    exit 1
 else
-    echo "   ⚠️  数据库文件不存在，将在初始化时创建: $DB_PATH"
+    echo "   ✓ DATABASE_URL 已配置（使用 Supabase 远程数据库）"
 fi
-echo "   📌 重要提示: 在 Hugging Face Spaces 中，请确保开启 Persistent Storage"
-echo "   📌 持久化路径: /app/data/ (包含 database.db 和 avatars/)"
 
-# 初始化数据库（仅创建表结构，仅在数据库完全为空时初始化数据）
-# 重要：不会覆盖任何已有数据（用户、资产、市场数据）
+# 初始化数据库表结构（仅创建表，不创建任何测试数据）
 cd /app/backend
-echo "📦 初始化数据库（仅创建表结构，保护已有数据）..."
+echo "📦 初始化数据库表结构..."
 PYTHONPATH=/app/backend python3 -m database.init_db || {
-    echo "⚠️  数据库初始化脚本执行异常，但继续启动服务..."
-    echo "   如果数据库已有数据，这是正常现象"
+    echo "⚠️  数据库表结构创建失败，请检查数据库连接"
+    exit 1
 }
 
 # 启动后端 FastAPI（后台运行，端口 8000）

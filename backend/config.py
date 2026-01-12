@@ -5,11 +5,8 @@ from pathlib import Path
 # 项目根目录
 BASE_DIR = Path(__file__).parent.parent
 
-# 数据库配置
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    f"sqlite:///{BASE_DIR}/data/database.db"
-)
+# 数据库配置（从环境变量读取，必须配置）
+# 注意：DATABASE_URL 在 database/base.py 中处理，这里不再重复定义
 
 # API配置
 API_HOST = os.getenv("API_HOST", "0.0.0.0")

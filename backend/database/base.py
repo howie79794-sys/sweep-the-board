@@ -2,23 +2,18 @@ from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import os
-from pathlib import Path
 
-# 项目根目录
-BASE_DIR = Path(__file__).parent.parent.parent
+# 数据库连接字符串（从环境变量读取，必须配置）
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError(
+        "DATABASE_URL 环境变量未设置。请配置 Supabase 数据库连接字符串。"
+    )
 
-# 数据库路径
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    f"sqlite:///{BASE_DIR}/data/database.db"
-)
-
-# 确保数据目录存在
-os.makedirs(BASE_DIR / "data", exist_ok=True)
-
+# 创建数据库引擎
+# PostgreSQL (Supabase) 不需要特殊的连接参数
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {},
     echo=False
 )
 
