@@ -7,7 +7,6 @@ from sqlalchemy import func
 from typing import List, Optional
 from pathlib import Path
 from datetime import date, datetime
-import shutil
 import uuid
 import json
 import traceback
@@ -16,7 +15,8 @@ from database.config import get_db
 from database.models import User, Asset, MarketData, Ranking
 from services.market_data import update_asset_data, update_all_assets_data
 from services.ranking import save_rankings, get_or_set_baseline_price
-from config import UPLOAD_DIR, MAX_UPLOAD_SIZE, ALLOWED_EXTENSIONS, BASELINE_DATE
+from services.storage import upload_avatar, delete_avatar
+from config import MAX_UPLOAD_SIZE, ALLOWED_EXTENSIONS, BASELINE_DATE
 from pydantic import BaseModel, ConfigDict, Field
 
 # 创建路由器
@@ -189,7 +189,7 @@ async def upload_avatar(
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
-    """上传用户头像"""
+    """上传用户头像到 Supabase Storage"""
     # 验证用户
     db_user = db.query(User).filter(User.id == user_id).first()
     if not db_user:
@@ -210,24 +210,34 @@ async def upload_avatar(
     
     # 生成唯一文件名
     file_name = f"{uuid.uuid4()}{file_ext}"
-    file_path = UPLOAD_DIR / file_name
     
-    # 保存文件
-    with open(file_path, "wb") as f:
-        f.write(file_content)
-    
-    # 删除旧头像（如果存在）
-    if db_user.avatar_url:
-        old_file_path = UPLOAD_DIR / Path(db_user.avatar_url).name
-        if old_file_path.exists():
-            old_file_path.unlink()
-    
-    # 更新用户头像URL
-    db_user.avatar_url = f"/avatars/{file_name}"
-    db.commit()
-    db.refresh(db_user)
-    
-    return {"message": "头像上传成功", "avatar_url": db_user.avatar_url}
+    try:
+        # 删除旧头像（如果存在且是 Supabase Storage URL）
+        if db_user.avatar_url:
+            # 检查是否是 Supabase Storage URL
+            if db_user.avatar_url.startswith("http") and "storage/v1/object/public" in db_user.avatar_url:
+                delete_avatar(db_user.avatar_url)
+            # 如果是旧的本地路径，也尝试删除（兼容旧数据）
+            elif db_user.avatar_url.startswith("/avatars/"):
+                # 旧数据，不删除（因为可能已经不存在了）
+                pass
+        
+        # 上传到 Supabase Storage
+        public_url = upload_avatar(file_content, file_name)
+        
+        # 更新用户头像URL（存储完整的 Supabase Storage 公网 URL）
+        db_user.avatar_url = public_url
+        db.commit()
+        db.refresh(db_user)
+        
+        return {"message": "头像上传成功", "avatar_url": db_user.avatar_url}
+        
+    except Exception as e:
+        db.rollback()
+        error_msg = f"上传头像失败: {str(e)}"
+        print(f"[API] {error_msg}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=error_msg)
 
 
 # ==================== 资产管理路由 ====================

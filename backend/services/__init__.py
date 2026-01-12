@@ -11,6 +11,12 @@ from services.ranking import (
     save_rankings,
     get_or_set_baseline_price
 )
+from services.storage import (
+    upload_avatar,
+    delete_avatar,
+    get_public_url,
+    ensure_bucket_exists
+)
 
 __all__ = [
     "fetch_asset_data",
@@ -20,5 +26,9 @@ __all__ = [
     "calculate_asset_rankings",
     "calculate_user_rankings",
     "save_rankings",
-    "get_or_set_baseline_price"
+    "get_or_set_baseline_price",
+    "upload_avatar",
+    "delete_avatar",
+    "get_public_url",
+    "ensure_bucket_exists"
 ]
