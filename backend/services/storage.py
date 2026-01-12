@@ -46,13 +46,13 @@ def get_supabase_client() -> Optional[Any]:
         # 简单检查环境变量
         print(f"[存储服务] SUPABASE_URL 是否存在: {SUPABASE_URL is not None}")
         
-        # 简单清理 URL
+        # 极限清理 URL：去除所有可能的空白字符和换行符
         if SUPABASE_URL:
-            supabase_url = SUPABASE_URL.strip().replace('\n', '').replace('\r', '').rstrip('/')
+            supabase_url = SUPABASE_URL.strip().replace('\n', '').replace('\r', '').replace(' ', '').rstrip('/')
         else:
             supabase_url = None
         
-        supabase_key = SUPABASE_SERVICE_ROLE_KEY.strip().replace('\n', '').replace('\r', '') if SUPABASE_SERVICE_ROLE_KEY else None
+        supabase_key = SUPABASE_SERVICE_ROLE_KEY.strip().replace('\n', '').replace('\r', '').replace(' ', '') if SUPABASE_SERVICE_ROLE_KEY else None
         
         if not supabase_url or not supabase_key:
             print("[存储服务] 警告: SUPABASE_URL 或 SUPABASE_SERVICE_ROLE_KEY 未设置，无法初始化客户端")
@@ -66,6 +66,9 @@ def get_supabase_client() -> Optional[Any]:
         if create_client is None:
             print("[存储服务] 警告: supabase 库未正确安装")
             return None
+        
+        # DNS 预警：打印清理后的 URL 详情
+        print(f"[存储服务] 清理后的 SUPABASE_URL (repr): {repr(supabase_url)}")
         
         try:
             _supabase_client = create_client(supabase_url, supabase_key)
