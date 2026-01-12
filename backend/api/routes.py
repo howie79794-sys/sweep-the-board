@@ -15,7 +15,7 @@ from database.config import get_db
 from database.models import User, Asset, MarketData, Ranking
 from services.market_data import update_asset_data, update_all_assets_data
 from services.ranking import save_rankings, get_or_set_baseline_price
-from services.storage import upload_avatar, delete_avatar, normalize_avatar_url
+from services.storage import upload_avatar as upload_avatar_to_storage, delete_avatar, normalize_avatar_url
 from config import MAX_UPLOAD_SIZE, ALLOWED_EXTENSIONS, BASELINE_DATE
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -236,7 +236,7 @@ async def upload_avatar(
                 pass
         
         # 上传到 Supabase Storage
-        public_url = await upload_avatar(file_content, file_name)
+        public_url = await upload_avatar_to_storage(file_content, file_name)
         
         # 更新用户头像URL（存储完整的 Supabase Storage 公网 URL）
         db_user.avatar_url = public_url
