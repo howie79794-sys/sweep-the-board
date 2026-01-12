@@ -10,21 +10,13 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root / "backend"))
 
-from database.base import engine, Base
+from database.config import engine, Base, init_db
 
-def init_db():
-    """初始化数据库表结构
-    
-    此函数仅创建表结构（如果不存在），不会创建任何测试数据。
-    所有用户、资产等数据必须通过网页管理界面手动创建。
-    """
+if __name__ == "__main__":
     try:
-        # 导入所有模型以确保它们被注册到 Base.metadata
-        from models import user, asset, market_data, ranking  # noqa: F401
-        
         # 创建所有表（如果不存在）
         print("[数据库初始化] 正在创建表结构...")
-        Base.metadata.create_all(bind=engine)
+        init_db()
         print("[数据库初始化] ✓ 表结构创建完成")
         print("[数据库初始化] 📌 注意：不会创建任何测试数据，所有数据需通过管理界面手动创建")
         
@@ -33,6 +25,3 @@ def init_db():
         import traceback
         traceback.print_exc()
         raise  # 表创建失败应该抛出异常，因为这是关键步骤
-
-if __name__ == "__main__":
-    init_db()

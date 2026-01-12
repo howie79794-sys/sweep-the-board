@@ -33,7 +33,7 @@ PYTHONPATH=. python3 run.py
 或者使用uvicorn：
 
 ```bash
-PYTHONPATH=. uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+PYTHONPATH=. uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 ### 5. 访问API文档

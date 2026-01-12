@@ -14,7 +14,7 @@
 
 ```bash
 cd backend
-PYTHONPATH=. uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+PYTHONPATH=. uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 #### 2. 启动前端服务（新终端窗口）

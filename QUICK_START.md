@@ -22,7 +22,7 @@
 cd backend
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-PYTHONPATH=. uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+PYTHONPATH=. uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 #### 启动前端（新终端窗口）

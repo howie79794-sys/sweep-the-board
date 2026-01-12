@@ -14,7 +14,7 @@ echo ""
 # 启动后端
 echo "📦 启动后端API服务器..."
 cd "$SCRIPT_DIR/backend"
-PYTHONPATH=. uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload &
+PYTHONPATH=. uvicorn main:app --host 0.0.0.0 --port 8000 --reload &
 BACKEND_PID=$!
 echo "   后端PID: $BACKEND_PID"
 echo "   API地址: http://localhost:8000"

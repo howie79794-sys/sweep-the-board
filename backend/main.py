@@ -1,4 +1,6 @@
-"""FastAPI主应用"""
+"""FastAPI 应用启动入口
+极简的启动入口，负责组装各个模块
+"""
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -8,6 +10,7 @@ import os
 import traceback
 
 from config import CORS_ORIGINS, UPLOAD_DIR
+from api.routes import router
 
 # 创建FastAPI应用
 app = FastAPI(
@@ -42,13 +45,8 @@ async def global_exception_handler(request: Request, exc: Exception):
 # 挂载静态文件（头像）
 app.mount("/avatars", StaticFiles(directory=str(UPLOAD_DIR)), name="avatars")
 
-# 导入路由
-from api.routes import users, assets, data, ranking
-
-app.include_router(users.router, prefix="/api/users", tags=["users"])
-app.include_router(assets.router, prefix="/api/assets", tags=["assets"])
-app.include_router(data.router, prefix="/api/data", tags=["data"])
-app.include_router(ranking.router, prefix="/api/ranking", tags=["ranking"])
+# 注册路由
+app.include_router(router, prefix="/api")
 
 
 @app.get("/")

@@ -64,7 +64,7 @@ export DATABASE_URL="postgresql://user:password@host:port/database"
 cd backend
 pip install -r requirements.txt
 python3 -m database.init_db
-PYTHONPATH=. uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+PYTHONPATH=. uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 或者使用启动脚本：
@@ -111,20 +111,19 @@ sweep the board/
 │   │   └── ui/           # UI 基础组件
 │   ├── lib/              # 工具函数和 API 客户端
 │   └── types/            # TypeScript 类型定义
-├── backend/              # FastAPI 后端应用
-│   ├── api/              # API 路由
-│   │   ├── main.py       # FastAPI 应用入口
-│   │   └── routes/       # 路由模块
-│   │       ├── users.py      # 用户管理
-│   │       ├── assets.py     # 资产管理
-│   │       ├── data.py       # 数据更新
-│   │       └── ranking.py    # 排名查询
-│   ├── models/           # SQLAlchemy 数据模型
+├── backend/              # FastAPI 后端应用（模块化结构）
+│   ├── main.py           # FastAPI 应用启动入口（极简）
+│   ├── config.py         # 应用配置（CORS、文件上传等）
+│   ├── run.py            # 开发服务器启动脚本
+│   ├── database/         # 数据库模块
+│   │   ├── config.py     # 数据库配置（连接池、6543端口、sslmode）
+│   │   ├── models.py     # 所有数据库模型定义（User, Asset, MarketData, Ranking）
+│   │   └── init_db.py     # 数据库初始化脚本
 │   ├── services/         # 业务逻辑服务
-│   │   ├── data_fetcher.py      # 数据获取（akshare）
-│   │   ├── data_storage.py      # 数据存储
-│   │   └── ranking_calculator.py # 排名计算
-│   └── database/         # 数据库配置和初始化
+│   │   ├── market_data.py    # 市场数据获取（yfinance、baostock）
+│   │   └── ranking.py        # 排名计算逻辑
+│   └── api/              # API 路由
+│       └── routes.py     # 所有 API 路由（用户、资产、数据、排名）
 ├── data/                 # 本地数据存储
 │   └── avatars/          # 用户头像（不提交到 Git）
 ├── .github/              # GitHub Actions 工作流
@@ -193,10 +192,14 @@ sweep the board/
 
 ### 代码结构
 
-- 前端组件位于 `frontend/components/`
-- 后端API路由位于 `backend/api/routes/`
-- 数据模型位于 `backend/models/`
-- 业务逻辑位于 `backend/services/`
+- **前端组件**: `frontend/components/`
+- **后端API路由**: `backend/api/routes.py`（所有路由统一管理）
+- **数据模型**: `backend/database/models.py`（所有模型统一管理）
+- **业务逻辑**: 
+  - `backend/services/market_data.py`（市场数据获取和存储）
+  - `backend/services/ranking.py`（排名计算）
+- **数据库配置**: `backend/database/config.py`（连接池、端口、SSL配置）
+- **启动入口**: `backend/main.py`（极简的FastAPI应用组装）
 
 ### 数据更新
 

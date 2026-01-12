@@ -1,15 +1,12 @@
-"""排名计算服务"""
+"""排名计算服务
+专门存放计算龙虎榜排名的业务逻辑
+"""
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc
 from datetime import date
 from typing import List, Dict, Optional
 
-from models.asset import Asset
-from models.market_data import MarketData
-from models.ranking import Ranking
-from models.user import User
+from database.models import Asset, MarketData, Ranking, User
 from config import BASELINE_DATE
-import json
 
 
 def calculate_change_rate(current_price: float, baseline_price: float) -> float:

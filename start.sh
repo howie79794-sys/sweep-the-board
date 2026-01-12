@@ -29,7 +29,7 @@ PYTHONPATH=/app/backend python3 -m database.init_db || {
 # 启动后端 FastAPI（后台运行，端口 8000）
 echo "🔧 启动后端 API (端口 8000)..."
 cd /app/backend
-PYTHONPATH=/app/backend uvicorn api.main:app --host 0.0.0.0 --port 8000 &
+PYTHONPATH=/app/backend uvicorn main:app --host 0.0.0.0 --port 8000 &
 BACKEND_PID=$!
 
 # 等待后端启动
