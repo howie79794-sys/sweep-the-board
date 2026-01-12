@@ -12,7 +12,7 @@ from services.ranking import (
     get_or_set_baseline_price
 )
 from services.storage import (
-    upload_avatar,
+    upload_avatar_file,
     delete_avatar,
     get_public_url,
     normalize_avatar_url,
@@ -28,7 +28,7 @@ __all__ = [
     "calculate_user_rankings",
     "save_rankings",
     "get_or_set_baseline_price",
-    "upload_avatar",
+    "upload_avatar_file",
     "delete_avatar",
     "get_public_url",
     "normalize_avatar_url",
