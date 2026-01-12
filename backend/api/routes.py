@@ -129,10 +129,15 @@ async def get_users(
 ):
     """获取所有用户列表"""
     users = db.query(User).filter(User.is_active == True).offset(skip).limit(limit).all()
-    # 处理旧路径头像 URL
+    # 处理旧路径头像 URL（如果出错不影响返回用户列表）
     for user in users:
         if user.avatar_url:
-            user.avatar_url = normalize_avatar_url(user.avatar_url)
+            try:
+                user.avatar_url = normalize_avatar_url(user.avatar_url)
+            except Exception as e:
+                # 头像处理失败不影响用户列表返回
+                print(f"[API] 处理用户 {user.id} 头像 URL 时出错: {str(e)}")
+                user.avatar_url = None
     return users
 
 

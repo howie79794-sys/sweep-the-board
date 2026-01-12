@@ -2,8 +2,6 @@
 专门负责将图片上传到 Supabase Storage
 """
 import os
-import socket
-from urllib.parse import urlparse
 from typing import Optional, Any
 
 try:
@@ -36,102 +34,45 @@ DEFAULT_AVATAR_URL = "https://via.placeholder.com/150?text=Avatar"
 _supabase_client: Optional[Any] = None
 
 
-def get_supabase_client() -> Any:
+def get_supabase_client() -> Optional[Any]:
     """获取 Supabase 客户端（延迟初始化）"""
     global _supabase_client
     
     if not SUPABASE_AVAILABLE:
-        raise ImportError("supabase 库未安装，请运行: pip install supabase")
+        print("[存储服务] 警告: supabase 库未安装")
+        return None
     
     if _supabase_client is None:
-        try:
-            # ========== 诊断：打印环境变量详情 ==========
-            print(f"[存储服务] ========== Supabase 配置诊断 ==========")
-            print(f"[存储服务] SUPABASE_URL 原始值 (repr): {repr(SUPABASE_URL)}")
-            print(f"[存储服务] SUPABASE_URL 长度: {len(SUPABASE_URL) if SUPABASE_URL else 0}")
-            if SUPABASE_URL:
-                has_newline = '\n' in SUPABASE_URL
-                has_carriage = '\r' in SUPABASE_URL
-                print(f"[存储服务] SUPABASE_URL 包含 \\n: {has_newline}")
-                print(f"[存储服务] SUPABASE_URL 包含 \\r: {has_carriage}")
-                url_len = len(SUPABASE_URL)
-                if url_len >= 5:
-                    print(f"[存储服务] SUPABASE_URL 首尾空白: {repr(SUPABASE_URL[:5])} ... {repr(SUPABASE_URL[-5:])}")
-                else:
-                    print(f"[存储服务] SUPABASE_URL 首尾空白: {repr(SUPABASE_URL)}")
-            
-            # ========== 二次清理 URL：彻底去除所有空白字符和换行符 ==========
-            if SUPABASE_URL:
-                supabase_url = SUPABASE_URL.strip().replace('\n', '').replace('\r', '').rstrip('/')
-            else:
-                supabase_url = None
-            
-            supabase_key = SUPABASE_SERVICE_ROLE_KEY.strip().replace('\n', '').replace('\r', '') if SUPABASE_SERVICE_ROLE_KEY else None
-        except Exception as diag_error:
-            # 诊断代码本身出错，不影响主流程
-            print(f"[存储服务] ⚠️ 诊断代码执行出错: {type(diag_error).__name__}: {str(diag_error)}")
-            import traceback
-            traceback.print_exc()
-            # 使用简单的清理方式
-            try:
-                supabase_url = SUPABASE_URL.strip().rstrip('/') if SUPABASE_URL else None
-            except Exception:
-                supabase_url = None
-            try:
-                supabase_key = SUPABASE_SERVICE_ROLE_KEY.strip() if SUPABASE_SERVICE_ROLE_KEY else None
-            except Exception:
-                supabase_key = None
+        # 简单检查环境变量
+        print(f"[存储服务] SUPABASE_URL 是否存在: {SUPABASE_URL is not None}")
         
-        print(f"[存储服务] SUPABASE_URL 清理后 (repr): {repr(supabase_url)}")
-        print(f"[存储服务] SUPABASE_URL 清理后长度: {len(supabase_url) if supabase_url else 0}")
+        # 简单清理 URL
+        if SUPABASE_URL:
+            supabase_url = SUPABASE_URL.strip().replace('\n', '').replace('\r', '').rstrip('/')
+        else:
+            supabase_url = None
         
-        if not supabase_url:
-            raise ValueError(
-                "SUPABASE_URL 环境变量未设置。请在 Hugging Face Secrets 中配置 SUPABASE_URL。"
-            )
-        if not supabase_key:
-            raise ValueError(
-                "SUPABASE_SERVICE_ROLE_KEY 环境变量未设置。请在 Hugging Face Secrets 中配置 SUPABASE_SERVICE_ROLE_KEY。"
-            )
+        supabase_key = SUPABASE_SERVICE_ROLE_KEY.strip().replace('\n', '').replace('\r', '') if SUPABASE_SERVICE_ROLE_KEY else None
         
-        # 验证 URL 格式（必须是 https:// 开头）
+        if not supabase_url or not supabase_key:
+            print("[存储服务] 警告: SUPABASE_URL 或 SUPABASE_SERVICE_ROLE_KEY 未设置，无法初始化客户端")
+            return None
+        
+        # 验证 URL 格式
         if not supabase_url.startswith("https://"):
-            raise ValueError(
-                f"SUPABASE_URL 格式错误，必须是 https:// 开头。当前值: {repr(supabase_url)}"
-            )
-        
-        # ========== DNS 探测：尝试解析 Supabase 域名 ==========
-        domain = None
-        try:
-            parsed_url = urlparse(supabase_url)
-            domain = parsed_url.netloc
-            if domain:
-                print(f"[存储服务] 从 URL 提取的域名: {domain}")
-                
-                # 尝试 DNS 解析
-                print(f"[存储服务] 开始 DNS 探测: {domain}")
-                ip_address = socket.gethostbyname(domain)
-                print(f"[存储服务] ✅ DNS 探测成功: {domain} -> {ip_address}")
-            else:
-                print(f"[存储服务] ⚠️ 无法从 URL 中提取域名: {supabase_url}")
-        except socket.gaierror as e:
-            domain_name = domain if domain else "未知域名"
-            print(f"[存储服务] ❌ DNS 探测失败：无法解析 Supabase 域名 {domain_name}")
-            print(f"[存储服务] DNS 错误详情: {type(e).__name__}: {str(e)}")
-            # DNS 失败不阻止继续，可能是网络问题，让客户端库自己处理
-        except Exception as e:
-            domain_name = domain if domain else "未知域名"
-            print(f"[存储服务] ⚠️ DNS 探测时发生其他错误: {type(e).__name__}: {str(e)}")
-            print(f"[存储服务] 错误发生在域名: {domain_name}")
-            # 其他错误也不阻止继续
+            print(f"[存储服务] 警告: SUPABASE_URL 格式错误: {supabase_url[:20]}...")
+            return None
         
         if create_client is None:
-            raise ImportError("supabase 库未正确安装")
+            print("[存储服务] 警告: supabase 库未正确安装")
+            return None
         
-        print(f"[存储服务] 正在初始化 Supabase 客户端...")
-        _supabase_client = create_client(supabase_url, supabase_key)
-        print(f"[存储服务] ✅ Supabase 客户端初始化成功: {supabase_url}")
-        print(f"[存储服务] ========== 诊断完成 ==========")
+        try:
+            _supabase_client = create_client(supabase_url, supabase_key)
+            print(f"[存储服务] Supabase 客户端初始化成功")
+        except Exception as e:
+            print(f"[存储服务] 警告: Supabase 客户端初始化失败: {str(e)}")
+            return None
     
     return _supabase_client
 
@@ -167,12 +108,16 @@ def normalize_avatar_url(avatar_url: Optional[str]) -> Optional[str]:
     Returns:
         标准化后的头像 URL（如果是旧路径则返回默认占位图）
     """
-    if not avatar_url:
+    # 处理 None 情况
+    if avatar_url is None:
+        return None
+    
+    # 处理空字符串
+    if not avatar_url.strip():
         return None
     
     # 如果是旧的本地路径（/avatars/ 开头），返回默认占位图
     if avatar_url.startswith("/avatars/"):
-        print(f"[存储服务] 检测到旧路径头像: {avatar_url}，返回默认占位图")
         return DEFAULT_AVATAR_URL
     
     # 如果是完整的 Supabase Storage URL，直接返回
@@ -181,7 +126,6 @@ def normalize_avatar_url(avatar_url: Optional[str]) -> Optional[str]:
     
     # 其他情况（可能是相对路径或其他格式），返回默认占位图
     if not avatar_url.startswith("http"):
-        print(f"[存储服务] 检测到非标准路径头像: {avatar_url}，返回默认占位图")
         return DEFAULT_AVATAR_URL
     
     return avatar_url
@@ -204,6 +148,8 @@ async def upload_avatar_file(file_content: bytes, file_name: str) -> str:
     """
     try:
         client = get_supabase_client()
+        if client is None:
+            raise ValueError("Supabase 客户端未初始化，无法上传头像")
         
         # 上传文件到 Supabase Storage
         # file_name 作为文件路径（相对于 bucket）
@@ -266,6 +212,9 @@ async def delete_avatar(file_path: str) -> bool:
             file_path = file_path.replace("/avatars/", "")
         
         client = get_supabase_client()
+        if client is None:
+            print("[存储服务] 警告: Supabase 客户端未初始化，无法删除头像")
+            return False
         
         # 删除文件
         try:
