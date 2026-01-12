@@ -8,6 +8,7 @@ from datetime import date, datetime
 from database.base import get_db
 from models.asset import Asset
 from models.market_data import MarketData
+from models.user import User
 
 router = APIRouter()
 
@@ -244,6 +245,76 @@ async def trigger_update(
         import traceback
         print(f"[API] 完整错误堆栈:\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"数据更新失败: {str(e)}")
+
+
+@router.get("/charts/all")
+async def get_all_assets_chart_data(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """获取所有资产的图表数据（收益率和收盘价），用于首页图表展示"""
+    from config import BASELINE_DATE
+    from datetime import date as date_type
+    
+    # 默认使用基准日期作为起始日期
+    baseline_date_obj = date_type.fromisoformat(BASELINE_DATE) if isinstance(BASELINE_DATE, str) else BASELINE_DATE
+    start_date_obj = date_type.fromisoformat(start_date) if start_date else baseline_date_obj
+    end_date_obj = date_type.fromisoformat(end_date) if end_date else date_type.today()
+    
+    # 获取所有活跃资产
+    assets = db.query(Asset).join(User).filter(User.is_active == True).all()
+    
+    result = []
+    for asset in assets:
+        # 获取该资产在日期范围内的市场数据
+        market_data_query = db.query(MarketData).filter(
+            MarketData.asset_id == asset.id,
+            MarketData.date >= start_date_obj,
+            MarketData.date <= end_date_obj
+        ).order_by(MarketData.date.asc())
+        
+        market_data_list = market_data_query.all()
+        
+        # 获取基准价格
+        baseline_price = asset.baseline_price
+        if not baseline_price:
+            # 如果没有基准价格，尝试从基准日期的市场数据获取
+            baseline_data = db.query(MarketData).filter(
+                MarketData.asset_id == asset.id,
+                MarketData.date == baseline_date_obj
+            ).first()
+            if baseline_data:
+                baseline_price = baseline_data.close_price
+        
+        # 构建数据点
+        data_points = []
+        for md in market_data_list:
+            data_point = {
+                "date": md.date.isoformat(),
+                "close_price": md.close_price,
+            }
+            
+            # 计算收益率（相对于基准价格）
+            if baseline_price and baseline_price > 0:
+                change_rate = ((md.close_price - baseline_price) / baseline_price) * 100
+                data_point["change_rate"] = change_rate
+            else:
+                data_point["change_rate"] = None
+            
+            data_points.append(data_point)
+        
+        if data_points:  # 只有当有数据点时才添加到结果中
+            result.append({
+                "asset_id": asset.id,
+                "code": asset.code,
+                "name": asset.name,
+                "baseline_price": baseline_price,
+                "baseline_date": asset.baseline_date.isoformat() if asset.baseline_date else None,
+                "data": data_points
+            })
+    
+    return result
 
 
 @router.get("/markets/types")

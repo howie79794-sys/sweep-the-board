@@ -113,13 +113,10 @@ async def create_asset(asset: AssetCreate, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
     
-    # 检查是否已存在相同代码的资产（同一用户）
-    existing = db.query(Asset).filter(
-        Asset.user_id == asset.user_id,
-        Asset.code == asset.code
-    ).first()
+    # 检查该用户是否已有资产（每个用户只能绑定一个资产）
+    existing = db.query(Asset).filter(Asset.user_id == asset.user_id).first()
     if existing:
-        raise HTTPException(status_code=400, detail="该用户已存在相同代码的资产")
+        raise HTTPException(status_code=400, detail="该用户已绑定资产，每个用户只能绑定一个资产")
     
     asset_dict = asset.dict()
     # 转换日期字符串
@@ -168,11 +165,21 @@ async def update_asset(
         if update_data.get(date_field):
             update_data[date_field] = date.fromisoformat(update_data[date_field])
     
-    # 如果更新user_id，验证新用户存在
+    # 如果更新user_id，验证新用户存在且该用户没有其他资产
     if "user_id" in update_data:
-        user = db.query(User).filter(User.id == update_data["user_id"]).first()
+        new_user_id = update_data["user_id"]
+        # 验证新用户存在
+        user = db.query(User).filter(User.id == new_user_id).first()
         if not user:
             raise HTTPException(status_code=404, detail="用户不存在")
+        
+        # 检查新用户是否已有其他资产（除了当前资产）
+        existing_asset = db.query(Asset).filter(
+            Asset.user_id == new_user_id,
+            Asset.id != asset_id
+        ).first()
+        if existing_asset:
+            raise HTTPException(status_code=400, detail="该用户已绑定资产，每个用户只能绑定一个资产")
     
     for key, value in update_data.items():
         setattr(db_asset, key, value)

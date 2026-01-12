@@ -14,6 +14,8 @@ export default function AdminPage() {
   const [error, setError] = useState<string | null>(null)
   const [showUserDialog, setShowUserDialog] = useState(false)
   const [showAssetDialog, setShowAssetDialog] = useState(false)
+  const [editingUser, setEditingUser] = useState<User | null>(null)
+  const [editingAsset, setEditingAsset] = useState<Asset | null>(null)
   const [userForm, setUserForm] = useState({ name: "" })
   const [assetForm, setAssetForm] = useState({
     user_id: "",
@@ -99,9 +101,36 @@ export default function AdminPage() {
       await userAPI.create({ name: userForm.name.trim() })
       setShowUserDialog(false)
       setUserForm({ name: "" })
+      setEditingUser(null)
       await loadUsers()
     } catch (err: any) {
       setError(err.message || "创建用户失败")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleEditUser = (user: User) => {
+    setEditingUser(user)
+    setUserForm({ name: user.name })
+    setShowUserDialog(true)
+  }
+
+  const handleUpdateUser = async () => {
+    if (!editingUser || !userForm.name.trim()) {
+      setError("用户名不能为空")
+      return
+    }
+    try {
+      setLoading(true)
+      setError(null)
+      await userAPI.update(editingUser.id, { name: userForm.name.trim() })
+      setShowUserDialog(false)
+      setUserForm({ name: "" })
+      setEditingUser(null)
+      await loadUsers()
+    } catch (err: any) {
+      setError(err.message || "更新用户失败")
     } finally {
       setLoading(false)
     }
@@ -139,9 +168,48 @@ export default function AdminPage() {
       })
       setShowAssetDialog(false)
       setAssetForm({ user_id: "", asset_type: "stock", market: "", code: "", name: "" })
+      setEditingAsset(null)
       await loadAssets()
     } catch (err: any) {
       setError(err.message || "创建资产失败")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleEditAsset = (asset: Asset) => {
+    setEditingAsset(asset)
+    setAssetForm({
+      user_id: asset.user_id.toString(),
+      asset_type: asset.asset_type,
+      market: asset.market,
+      code: asset.code,
+      name: asset.name,
+    })
+    setShowAssetDialog(true)
+  }
+
+  const handleUpdateAsset = async () => {
+    if (!editingAsset || !assetForm.user_id || !assetForm.market.trim() || !assetForm.code.trim() || !assetForm.name.trim()) {
+      setError("请填写所有必填字段")
+      return
+    }
+    try {
+      setLoading(true)
+      setError(null)
+      await assetAPI.update(editingAsset.id, {
+        user_id: parseInt(assetForm.user_id),
+        asset_type: assetForm.asset_type,
+        market: assetForm.market.trim(),
+        code: assetForm.code.trim(),
+        name: assetForm.name.trim(),
+      })
+      setShowAssetDialog(false)
+      setAssetForm({ user_id: "", asset_type: "stock", market: "", code: "", name: "" })
+      setEditingAsset(null)
+      await loadAssets()
+    } catch (err: any) {
+      setError(err.message || "更新资产失败")
     } finally {
       setLoading(false)
     }
@@ -224,11 +292,11 @@ export default function AdminPage() {
             </button>
           </div>
           
-          {/* 添加用户对话框 */}
+          {/* 添加/编辑用户对话框 */}
           {showUserDialog && (
             <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
               <div className="bg-background border rounded-lg p-6 w-full max-w-md">
-                <h3 className="text-xl font-bold mb-4">添加用户</h3>
+                <h3 className="text-xl font-bold mb-4">{editingUser ? "编辑用户" : "添加用户"}</h3>
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-medium mb-2">用户名</label>
@@ -246,6 +314,7 @@ export default function AdminPage() {
                       onClick={() => {
                         setShowUserDialog(false)
                         setUserForm({ name: "" })
+                        setEditingUser(null)
                         setError(null)
                       }}
                       className="px-4 py-2 border rounded hover:bg-secondary"
@@ -254,11 +323,11 @@ export default function AdminPage() {
                       取消
                     </button>
                     <button
-                      onClick={handleCreateUser}
+                      onClick={editingUser ? handleUpdateUser : handleCreateUser}
                       className="px-4 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50"
                       disabled={loading}
                     >
-                      {loading ? "创建中..." : "创建"}
+                      {loading ? (editingUser ? "更新中..." : "创建中...") : (editingUser ? "更新" : "创建")}
                     </button>
                   </div>
                 </div>
@@ -287,6 +356,13 @@ export default function AdminPage() {
                   </div>
                   <div className="flex gap-2">
                     <button
+                      onClick={() => handleEditUser(user)}
+                      className="px-4 py-2 border rounded hover:bg-secondary disabled:opacity-50"
+                      disabled={loading}
+                    >
+                      编辑
+                    </button>
+                    <button
                       onClick={() => handleDeleteUser(user.id)}
                       className="px-4 py-2 border rounded hover:bg-destructive/10 text-destructive disabled:opacity-50"
                       disabled={loading}
@@ -314,11 +390,11 @@ export default function AdminPage() {
             </button>
           </div>
           
-          {/* 添加资产对话框 */}
+          {/* 添加/编辑资产对话框 */}
           {showAssetDialog && (
             <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
               <div className="bg-background border rounded-lg p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
-                <h3 className="text-xl font-bold mb-4">添加资产</h3>
+                <h3 className="text-xl font-bold mb-4">{editingAsset ? "编辑资产" : "添加资产"}</h3>
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-medium mb-2">用户</label>
@@ -383,6 +459,7 @@ export default function AdminPage() {
                       onClick={() => {
                         setShowAssetDialog(false)
                         setAssetForm({ user_id: "", asset_type: "stock", market: "", code: "", name: "" })
+                        setEditingAsset(null)
                         setError(null)
                       }}
                       className="px-4 py-2 border rounded hover:bg-secondary"
@@ -391,11 +468,11 @@ export default function AdminPage() {
                       取消
                     </button>
                     <button
-                      onClick={handleCreateAsset}
+                      onClick={editingAsset ? handleUpdateAsset : handleCreateAsset}
                       className="px-4 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50"
                       disabled={loading}
                     >
-                      {loading ? "创建中..." : "创建"}
+                      {loading ? (editingAsset ? "更新中..." : "创建中...") : (editingAsset ? "更新" : "创建")}
                     </button>
                   </div>
                 </div>
@@ -424,6 +501,13 @@ export default function AdminPage() {
                       </div>
                     </div>
                     <div className="flex gap-2">
+                      <button
+                        onClick={() => handleEditAsset(asset)}
+                        className="px-4 py-2 border rounded hover:bg-secondary disabled:opacity-50"
+                        disabled={loading}
+                      >
+                        编辑
+                      </button>
                       <button
                         onClick={() => handleDeleteAsset(asset.id)}
                         className="px-4 py-2 border rounded hover:bg-destructive/10 text-destructive disabled:opacity-50"

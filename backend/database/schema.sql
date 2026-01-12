@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS assets (
     end_date DATE DEFAULT '2026-12-31',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    UNIQUE(user_id, code)
+    UNIQUE(user_id)
 );
 
 -- 市场数据表

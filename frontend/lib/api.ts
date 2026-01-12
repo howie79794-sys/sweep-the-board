@@ -133,6 +133,12 @@ export const dataAPI = {
   },
   getLatestData: (assetId: number) => fetchAPI<any>(`/api/data/assets/${assetId}/latest`),
   getBaselinePrice: (assetId: number) => fetchAPI<any>(`/api/data/assets/${assetId}/baseline`),
+  getAllAssetsChartData: (params?: { start_date?: string; end_date?: string }) => {
+    const query = new URLSearchParams()
+    if (params?.start_date) query.append('start_date', params.start_date)
+    if (params?.end_date) query.append('end_date', params.end_date)
+    return fetchAPI<any[]>(`/api/data/charts/all?${query}`)
+  },
   update: (assetIds?: number[], force?: boolean) => {
     // 构建请求体，确保格式正确
     const requestBody: { asset_ids?: number[] | null; force: boolean } = {

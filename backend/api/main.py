@@ -1,9 +1,11 @@
 """FastAPI主应用"""
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 from pathlib import Path
 import os
+import traceback
 
 from config import CORS_ORIGINS, UPLOAD_DIR
 
@@ -22,6 +24,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 全局异常处理器
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """全局异常处理器，防止500错误导致服务崩溃"""
+    print(f"[API] 未处理的异常: {type(exc).__name__}: {str(exc)}")
+    traceback.print_exc()
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": f"内部服务器错误: {str(exc)}",
+            "type": type(exc).__name__
+        }
+    )
 
 # 挂载静态文件（头像）
 app.mount("/avatars", StaticFiles(directory=str(UPLOAD_DIR)), name="avatars")

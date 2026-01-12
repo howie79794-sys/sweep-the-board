@@ -108,6 +108,13 @@ async def get_rankings(
     
     user_results = []
     for ranking in user_rankings:
+        # 获取最新市场数据（用于显示当前价格）
+        latest_market_data = db.query(MarketData).filter(
+            MarketData.asset_id == ranking.asset_id
+        ).order_by(MarketData.date.desc()).first()
+        
+        current_price = latest_market_data.close_price if latest_market_data else None
+        
         user_results.append({
             "id": ranking.id,
             "date": ranking.date.isoformat(),
@@ -116,6 +123,7 @@ async def get_rankings(
             "asset_rank": ranking.asset_rank,
             "user_rank": ranking.user_rank,
             "change_rate": ranking.change_rate,
+            "current_price": current_price,
             "rank_type": ranking.rank_type,
             "created_at": ranking.created_at.isoformat() if ranking.created_at else None,
             "user": {
@@ -124,6 +132,19 @@ async def get_rankings(
                 "avatar_url": ranking.user.avatar_url,
                 "created_at": ranking.user.created_at.isoformat() if ranking.user.created_at else None,
                 "is_active": ranking.user.is_active,
+            },
+            "asset": {
+                "id": ranking.asset.id,
+                "user_id": ranking.asset.user_id,
+                "code": ranking.asset.code,
+                "name": ranking.asset.name,
+                "asset_type": ranking.asset.asset_type,
+                "market": ranking.asset.market,
+                "baseline_price": ranking.asset.baseline_price,
+                "baseline_date": ranking.asset.baseline_date.isoformat() if ranking.asset.baseline_date else None,
+                "start_date": ranking.asset.start_date.isoformat() if ranking.asset.start_date else None,
+                "end_date": ranking.asset.end_date.isoformat() if ranking.asset.end_date else None,
+                "created_at": ranking.asset.created_at.isoformat() if ranking.asset.created_at else None,
             }
         })
     
