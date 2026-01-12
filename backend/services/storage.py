@@ -2,6 +2,8 @@
 专门负责将图片上传到 Supabase Storage
 """
 import os
+import socket
+from urllib.parse import urlparse
 from typing import Optional, Any
 
 try:
@@ -42,9 +44,25 @@ def get_supabase_client() -> Any:
         raise ImportError("supabase 库未安装，请运行: pip install supabase")
     
     if _supabase_client is None:
-        # 确保 SUPABASE_URL 和 SUPABASE_SERVICE_ROLE_KEY 已去除空格和换行符，并去掉末尾斜杠
-        supabase_url = SUPABASE_URL.strip().rstrip('/') if SUPABASE_URL else None
-        supabase_key = SUPABASE_SERVICE_ROLE_KEY.strip() if SUPABASE_SERVICE_ROLE_KEY else None
+        # ========== 诊断：打印环境变量详情 ==========
+        print(f"[存储服务] ========== Supabase 配置诊断 ==========")
+        print(f"[存储服务] SUPABASE_URL 原始值 (repr): {repr(SUPABASE_URL)}")
+        print(f"[存储服务] SUPABASE_URL 长度: {len(SUPABASE_URL) if SUPABASE_URL else 0}")
+        if SUPABASE_URL:
+            print(f"[存储服务] SUPABASE_URL 包含 \\n: {'\n' in SUPABASE_URL}")
+            print(f"[存储服务] SUPABASE_URL 包含 \\r: {'\r' in SUPABASE_URL}")
+            print(f"[存储服务] SUPABASE_URL 首尾空白: {repr(SUPABASE_URL[:5] if len(SUPABASE_URL) >= 5 else SUPABASE_URL)} ... {repr(SUPABASE_URL[-5:] if len(SUPABASE_URL) >= 5 else SUPABASE_URL)}")
+        
+        # ========== 二次清理 URL：彻底去除所有空白字符和换行符 ==========
+        if SUPABASE_URL:
+            supabase_url = SUPABASE_URL.strip().replace('\n', '').replace('\r', '').rstrip('/')
+        else:
+            supabase_url = None
+        
+        supabase_key = SUPABASE_SERVICE_ROLE_KEY.strip().replace('\n', '').replace('\r', '') if SUPABASE_SERVICE_ROLE_KEY else None
+        
+        print(f"[存储服务] SUPABASE_URL 清理后 (repr): {repr(supabase_url)}")
+        print(f"[存储服务] SUPABASE_URL 清理后长度: {len(supabase_url) if supabase_url else 0}")
         
         if not supabase_url:
             raise ValueError(
@@ -61,11 +79,31 @@ def get_supabase_client() -> Any:
                 f"SUPABASE_URL 格式错误，必须是 https:// 开头。当前值: {repr(supabase_url)}"
             )
         
+        # ========== DNS 探测：尝试解析 Supabase 域名 ==========
+        try:
+            parsed_url = urlparse(supabase_url)
+            domain = parsed_url.netloc
+            print(f"[存储服务] 从 URL 提取的域名: {domain}")
+            
+            # 尝试 DNS 解析
+            print(f"[存储服务] 开始 DNS 探测: {domain}")
+            ip_address = socket.gethostbyname(domain)
+            print(f"[存储服务] ✅ DNS 探测成功: {domain} -> {ip_address}")
+        except socket.gaierror as e:
+            print(f"[存储服务] ❌ DNS 探测失败：无法解析 Supabase 域名 {domain}")
+            print(f"[存储服务] DNS 错误详情: {type(e).__name__}: {str(e)}")
+            # DNS 失败不阻止继续，可能是网络问题，让客户端库自己处理
+        except Exception as e:
+            print(f"[存储服务] ⚠️ DNS 探测时发生其他错误: {type(e).__name__}: {str(e)}")
+            # 其他错误也不阻止继续
+        
         if create_client is None:
             raise ImportError("supabase 库未正确安装")
         
+        print(f"[存储服务] 正在初始化 Supabase 客户端...")
         _supabase_client = create_client(supabase_url, supabase_key)
-        print(f"[存储服务] Supabase 客户端初始化成功: {supabase_url}")
+        print(f"[存储服务] ✅ Supabase 客户端初始化成功: {supabase_url}")
+        print(f"[存储服务] ========== 诊断完成 ==========")
     
     return _supabase_client
 
