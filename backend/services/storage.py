@@ -42,8 +42,8 @@ def get_supabase_client() -> Any:
         raise ImportError("supabase 库未安装，请运行: pip install supabase")
     
     if _supabase_client is None:
-        # 确保 SUPABASE_URL 和 SUPABASE_SERVICE_ROLE_KEY 已去除空格和换行符
-        supabase_url = SUPABASE_URL.strip() if SUPABASE_URL else None
+        # 确保 SUPABASE_URL 和 SUPABASE_SERVICE_ROLE_KEY 已去除空格和换行符，并去掉末尾斜杠
+        supabase_url = SUPABASE_URL.strip().rstrip('/') if SUPABASE_URL else None
         supabase_key = SUPABASE_SERVICE_ROLE_KEY.strip() if SUPABASE_SERVICE_ROLE_KEY else None
         
         if not supabase_url:
@@ -80,8 +80,8 @@ def get_public_url(file_path: str) -> str:
     Returns:
         完整的公网访问 URL
     """
-    # 确保 SUPABASE_URL 已去除空格和换行符
-    supabase_url = SUPABASE_URL.strip() if SUPABASE_URL else None
+    # 确保 SUPABASE_URL 已去除空格和换行符，并去掉末尾斜杠
+    supabase_url = SUPABASE_URL.strip().rstrip('/') if SUPABASE_URL else None
     if not supabase_url:
         raise ValueError("SUPABASE_URL 未配置")
     
@@ -121,7 +121,7 @@ def normalize_avatar_url(avatar_url: Optional[str]) -> Optional[str]:
     return avatar_url
 
 
-async def upload_avatar(file_content: bytes, file_name: str) -> str:
+async def upload_avatar_file(file_content: bytes, file_name: str) -> str:
     """
     上传头像到 Supabase Storage 的 avatars bucket
     
