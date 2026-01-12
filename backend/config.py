@@ -30,5 +30,6 @@ START_DATE = "2026-01-05"
 END_DATE = "2026-12-31"
 
 # Supabase Storage 配置
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+# 确保去除空格和换行符，避免连接错误
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip() if os.getenv("SUPABASE_URL") else None
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip() if os.getenv("SUPABASE_SERVICE_ROLE_KEY") else None

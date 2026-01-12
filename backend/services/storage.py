@@ -42,20 +42,30 @@ def get_supabase_client() -> Any:
         raise ImportError("supabase 库未安装，请运行: pip install supabase")
     
     if _supabase_client is None:
-        if not SUPABASE_URL:
+        # 确保 SUPABASE_URL 和 SUPABASE_SERVICE_ROLE_KEY 已去除空格和换行符
+        supabase_url = SUPABASE_URL.strip() if SUPABASE_URL else None
+        supabase_key = SUPABASE_SERVICE_ROLE_KEY.strip() if SUPABASE_SERVICE_ROLE_KEY else None
+        
+        if not supabase_url:
             raise ValueError(
                 "SUPABASE_URL 环境变量未设置。请在 Hugging Face Secrets 中配置 SUPABASE_URL。"
             )
-        if not SUPABASE_SERVICE_ROLE_KEY:
+        if not supabase_key:
             raise ValueError(
                 "SUPABASE_SERVICE_ROLE_KEY 环境变量未设置。请在 Hugging Face Secrets 中配置 SUPABASE_SERVICE_ROLE_KEY。"
+            )
+        
+        # 验证 URL 格式（必须是 https:// 开头）
+        if not supabase_url.startswith("https://"):
+            raise ValueError(
+                f"SUPABASE_URL 格式错误，必须是 https:// 开头。当前值: {repr(supabase_url)}"
             )
         
         if create_client is None:
             raise ImportError("supabase 库未正确安装")
         
-        _supabase_client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
-        print(f"[存储服务] Supabase 客户端初始化成功: {SUPABASE_URL}")
+        _supabase_client = create_client(supabase_url, supabase_key)
+        print(f"[存储服务] Supabase 客户端初始化成功: {supabase_url}")
     
     return _supabase_client
 
@@ -70,12 +80,14 @@ def get_public_url(file_path: str) -> str:
     Returns:
         完整的公网访问 URL
     """
-    if not SUPABASE_URL:
+    # 确保 SUPABASE_URL 已去除空格和换行符
+    supabase_url = SUPABASE_URL.strip() if SUPABASE_URL else None
+    if not supabase_url:
         raise ValueError("SUPABASE_URL 未配置")
     
     # Supabase Storage 公网 URL 格式
     # {SUPABASE_URL}/storage/v1/object/public/{bucket}/{file_path}
-    public_url = f"{SUPABASE_URL}/storage/v1/object/public/{AVATARS_BUCKET}/{file_path}"
+    public_url = f"{supabase_url}/storage/v1/object/public/{AVATARS_BUCKET}/{file_path}"
     return public_url
 
 
