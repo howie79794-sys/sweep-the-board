@@ -25,17 +25,19 @@ interface ChartDataPoint {
   [key: string]: string | number | undefined
 }
 
+interface DataPoint {
+  date: string
+  close_price: number
+  change_rate?: number | null
+}
+
 interface AssetChartData {
   asset_id: number
   code: string
   name: string
   baseline_price?: number
   baseline_date?: string
-  data: Array<{
-    date: string
-    close_price: number
-    change_rate?: number
-  }>
+  data: DataPoint[]
 }
 
 export function AllAssetsChart({
@@ -66,10 +68,10 @@ export function AllAssetsChart({
       setAssets(data)
 
       // 将所有资产的数据合并到同一个日期轴上
-      const dateMap = new Map<string, Record<string, any>>()
+      const dateMap = new Map<string, Record<string, string | number | null>>()
 
-      data.forEach((asset) => {
-        asset.data.forEach((point) => {
+      data.forEach((asset: AssetChartData) => {
+        asset.data.forEach((point: DataPoint) => {
           const date = point.date
           if (!dateMap.has(date)) {
             dateMap.set(date, { date })
@@ -88,22 +90,30 @@ export function AllAssetsChart({
 
       // 转换为数组并按日期排序
       const chartDataArray = Array.from(dateMap.values()).sort(
-        (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+        (a: Record<string, string | number | null>, b: Record<string, string | number | null>) => {
+          const dateA = typeof a.date === 'string' ? a.date : ''
+          const dateB = typeof b.date === 'string' ? b.date : ''
+          return new Date(dateA).getTime() - new Date(dateB).getTime()
+        }
       )
 
       // 格式化日期
-      const formattedData = chartDataArray.map((item) => ({
-        ...item,
-        date: new Date(item.date).toLocaleDateString("zh-CN", {
-          month: "short",
-          day: "numeric",
-        }),
-      }))
+      const formattedData = chartDataArray.map((item: Record<string, string | number | null>) => {
+        const dateStr = typeof item.date === 'string' ? item.date : ''
+        return {
+          ...item,
+          date: new Date(dateStr).toLocaleDateString("zh-CN", {
+            month: "short",
+            day: "numeric",
+          }),
+        }
+      })
 
       setChartData(formattedData)
       setError(null)
-    } catch (err: any) {
-      setError(err.message || "加载图表数据失败")
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : "加载图表数据失败"
+      setError(errorMessage)
     } finally {
       setLoading(false)
     }
@@ -167,15 +177,17 @@ export function AllAssetsChart({
               }}
             />
             <Tooltip
-              formatter={(value: number, name: string) => {
+              formatter={(value: number | string, name: string) => {
+                const numValue = typeof value === 'number' ? value : parseFloat(String(value))
+                if (isNaN(numValue)) return value
                 if (showChangeRate) {
-                  return formatPercent(value)
+                  return formatPercent(numValue)
                 }
-                return formatNumber(value)
+                return formatNumber(numValue)
               }}
             />
             <Legend />
-            {assets.map((asset, index) => (
+            {assets.map((asset: AssetChartData, index: number) => (
               <Line
                 key={asset.code}
                 type="monotone"
