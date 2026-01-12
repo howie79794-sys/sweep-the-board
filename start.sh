@@ -21,10 +21,14 @@ fi
 echo "   📌 重要提示: 在 Hugging Face Spaces 中，请确保开启 Persistent Storage"
 echo "   📌 持久化路径: /app/data/ (包含 database.db 和 avatars/)"
 
-# 初始化数据库（确保表结构存在，如果数据库为空则初始化数据）
+# 初始化数据库（仅创建表结构，仅在数据库完全为空时初始化数据）
+# 重要：不会覆盖任何已有数据（用户、资产、市场数据）
 cd /app/backend
-echo "📦 初始化数据库（确保表结构存在）..."
-PYTHONPATH=/app/backend python3 -m database.init_db || true
+echo "📦 初始化数据库（仅创建表结构，保护已有数据）..."
+PYTHONPATH=/app/backend python3 -m database.init_db || {
+    echo "⚠️  数据库初始化脚本执行异常，但继续启动服务..."
+    echo "   如果数据库已有数据，这是正常现象"
+}
 
 # 启动后端 FastAPI（后台运行，端口 8000）
 echo "🔧 启动后端 API (端口 8000)..."
