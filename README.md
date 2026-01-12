@@ -11,22 +11,24 @@ pinned: false
 
 一个可扩展的金融资产排行榜网站，支持多用户、多资产、多市场类型，记录各种金融资产的每日数据，支持排名展示、数据可视化。
 
-## 项目特性
+## ✨ 项目特性
 
 - 📊 支持多种资产类型：股票、基金、期货、外汇等
 - 👥 支持多用户管理，每人可选择多支资产
 - 📈 基于涨跌幅的排名系统（相对于2026-01-05基准日）
-- 🏆 第一名荣誉标签展示
+- 🏆 第一名荣誉标签展示（金色边框、渐变背景、动画效果）
 - 📱 响应式设计，支持移动端
 - 🔄 手动和自动数据更新
-- 🎨 现代化的UI设计
-- 🔒 数据持久化，更新部署不影响用户数据
+- 🎨 现代化的UI设计（Tailwind CSS + Radix UI）
+- 📉 数据可视化（Recharts图表展示资产走势）
+- 🔒 数据持久化，使用 Supabase PostgreSQL 数据库
+- 🎯 完整的管理界面（用户管理、资产管理、数据管理）
 
-## 技术栈
+## 🛠️ 技术栈
 
-- **前端**: Next.js 14 (App Router), Tailwind CSS, shadcn/ui, Recharts
-- **后端**: FastAPI (Python)
-- **数据库**: SQLite
+- **前端**: Next.js 14 (App Router), TypeScript, Tailwind CSS, Radix UI, Recharts
+- **后端**: FastAPI (Python), SQLAlchemy
+- **数据库**: Supabase (PostgreSQL)
 - **数据源**: akshare
 - **部署**: Hugging Face Spaces + GitHub Actions
 
@@ -37,6 +39,7 @@ pinned: false
 - Python 3.10+
 - Node.js 20+
 - npm 或 yarn
+- Supabase 账户（用于数据库）
 
 ### 安装和运行
 
@@ -44,10 +47,18 @@ pinned: false
 
 ```bash
 git clone <repository-url>
-cd cool-down-leaderboard
+cd "sweep the board"
 ```
 
-#### 2. 后端设置
+#### 2. 配置数据库
+
+在 Supabase 创建项目后，获取数据库连接字符串，设置环境变量：
+
+```bash
+export DATABASE_URL="postgresql://user:password@host:port/database"
+```
+
+#### 3. 后端设置
 
 ```bash
 cd backend
@@ -56,7 +67,13 @@ python3 -m database.init_db
 PYTHONPATH=. uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-#### 3. 前端设置
+或者使用启动脚本：
+
+```bash
+./start_backend.sh
+```
+
+#### 4. 前端设置
 
 ```bash
 cd frontend
@@ -64,59 +81,95 @@ npm install
 npm run dev
 ```
 
-#### 4. 访问应用
+或者使用启动脚本：
+
+```bash
+./START_FRONTEND.sh
+```
+
+#### 5. 访问应用
 
 - 前端界面: http://localhost:3000
 - 后端API: http://localhost:8000
 - API文档: http://localhost:8000/docs
+- 管理界面: http://localhost:3000/admin
 
-## 项目结构
+## 📁 项目结构
 
 ```
-cool-down-leaderboard/
-├── frontend/          # Next.js前端
-│   ├── app/          # 页面
-│   ├── components/   # 组件
-│   └── lib/          # 工具函数
-├── backend/          # Python后端
-│   ├── api/          # API路由
-│   ├── models/       # 数据模型
-│   ├── services/     # 业务逻辑
-│   └── database/     # 数据库
-├── data/             # 数据存储（不提交到Git）
-│   ├── database.db   # 数据库文件
-│   └── avatars/      # 用户头像
-├── .github/          # GitHub Actions
-└── README.md
+sweep the board/
+├── frontend/              # Next.js 前端应用
+│   ├── app/              # 页面路由（App Router）
+│   │   ├── page.tsx      # 主页（排行榜）
+│   │   └── admin/        # 管理界面
+│   ├── components/       # React 组件
+│   │   ├── Leaderboard.tsx    # 排行榜组件
+│   │   ├── UserCard.tsx       # 用户卡片
+│   │   ├── AssetCard.tsx      # 资产卡片
+│   │   ├── HonorBadge.tsx     # 荣誉标签
+│   │   ├── AssetChart.tsx     # 资产走势图
+│   │   └── ui/           # UI 基础组件
+│   ├── lib/              # 工具函数和 API 客户端
+│   └── types/            # TypeScript 类型定义
+├── backend/              # FastAPI 后端应用
+│   ├── api/              # API 路由
+│   │   ├── main.py       # FastAPI 应用入口
+│   │   └── routes/       # 路由模块
+│   │       ├── users.py      # 用户管理
+│   │       ├── assets.py     # 资产管理
+│   │       ├── data.py       # 数据更新
+│   │       └── ranking.py    # 排名查询
+│   ├── models/           # SQLAlchemy 数据模型
+│   ├── services/         # 业务逻辑服务
+│   │   ├── data_fetcher.py      # 数据获取（akshare）
+│   │   ├── data_storage.py      # 数据存储
+│   │   └── ranking_calculator.py # 排名计算
+│   └── database/         # 数据库配置和初始化
+├── data/                 # 本地数据存储
+│   └── avatars/          # 用户头像（不提交到 Git）
+├── .github/              # GitHub Actions 工作流
+├── Dockerfile            # Docker 配置
+├── app.py                # Hugging Face Spaces 入口
+└── README.md             # 项目文档
 ```
 
-## 数据持久化
+## 💾 数据持久化
+
+### 数据库配置
+
+- **数据库类型**: Supabase PostgreSQL
+- **环境变量**: 必须配置 `DATABASE_URL` 环境变量
+- **数据安全**: 所有数据存储在云端 PostgreSQL 数据库，支持自动备份
+- **用户头像**: 存储在本地 `data/avatars/` 目录（不提交到 Git）
 
 ### 重要说明
 
-- **用户数据不会被 Git 跟踪**: `data/database.db` 和 `data/avatars/` 已添加到 `.gitignore`
-- **无感更新部署**: 每次代码更新不会覆盖用户编辑的个人信息和上传的头像
-- **数据备份**: 建议定期备份 `data/` 目录
+- **必须配置数据库**: 项目启动前必须设置 `DATABASE_URL` 环境变量
+- **数据持久化**: 使用 Supabase 数据库，数据安全可靠
+- **无感更新部署**: 每次代码更新不会影响数据库中的用户数据
 
-## 初始数据
+## 📅 数据配置
 
 - **基准日期**: 2026年1月5日
 - **数据追踪**: 2026年1月5日 - 2026年12月31日
-- **初始资产**: 8支A股股票/ETF
+- **排名计算**: 基于相对于基准日的涨跌幅进行排名
 
-## 功能说明
+## 🎯 功能说明
 
-### 排行榜
+### 排行榜功能
 
-- 资产排名：按涨跌幅对资产进行排名
-- 用户排名：按用户最佳资产涨跌幅进行排名
-- 荣誉标签：第一名特殊展示
+- **资产排名**: 按涨跌幅对所有资产进行排名展示
+- **用户排名**: 按用户最佳资产涨跌幅进行排名
+- **标签页切换**: 支持在资产排名和用户排名之间切换
+- **荣誉标签**: 第一名显示特殊金色边框和渐变背景，带动画效果
+- **数据可视化**: 使用 Recharts 展示资产走势图表
 
 ### 管理界面
 
-- 用户管理：添加、编辑、删除用户，上传头像
-- 资产管理：添加、编辑、删除资产
-- 数据管理：触发数据更新
+- **用户管理**: 查看用户列表，支持添加、编辑、删除用户，上传头像（5MB限制）
+- **资产管理**: 查看资产列表，支持添加、编辑、删除资产
+- **数据管理**: 手动触发数据更新，获取最新市场数据
+- **数据统计**: 显示用户数量、资产数量等统计信息
 
 ## 部署
 
@@ -153,13 +206,29 @@ cool-down-leaderboard/
 2. API调用：`POST /api/data/update`
 3. GitHub Actions：配置定时任务自动更新
 
-## 版本历史
+## 📝 版本历史
 
-- **v1.0.0** (2026-01-11): 首个版本发布
-  - 完整的用户和资产管理功能
-  - 排行榜展示
-  - 数据可视化
-  - 管理界面
+### v1.0.0 (2026-01-11) - 第一版发布 ✅
+
+**核心功能**:
+- ✅ 完整的用户和资产管理功能（CRUD操作）
+- ✅ 排行榜展示（资产排名和用户排名）
+- ✅ 数据可视化（Recharts图表）
+- ✅ 管理界面（用户、资产、数据管理）
+- ✅ 荣誉标签系统（第一名特殊展示）
+- ✅ 头像上传功能（支持JPG、PNG、WebP格式）
+- ✅ 多市场类型支持（股票、基金等）
+- ✅ 一人多资产支持
+- ✅ 基于涨跌幅的排名计算
+- ✅ 响应式设计，支持移动端
+
+**技术实现**:
+- ✅ Next.js 14 + TypeScript 前端
+- ✅ FastAPI + SQLAlchemy 后端
+- ✅ Supabase PostgreSQL 数据库
+- ✅ akshare 数据源集成
+- ✅ Hugging Face Spaces 部署配置
+- ✅ GitHub Actions 自动化部署
 
 ## 许可证
 
