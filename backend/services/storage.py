@@ -44,22 +44,43 @@ def get_supabase_client() -> Any:
         raise ImportError("supabase 库未安装，请运行: pip install supabase")
     
     if _supabase_client is None:
-        # ========== 诊断：打印环境变量详情 ==========
-        print(f"[存储服务] ========== Supabase 配置诊断 ==========")
-        print(f"[存储服务] SUPABASE_URL 原始值 (repr): {repr(SUPABASE_URL)}")
-        print(f"[存储服务] SUPABASE_URL 长度: {len(SUPABASE_URL) if SUPABASE_URL else 0}")
-        if SUPABASE_URL:
-            print(f"[存储服务] SUPABASE_URL 包含 \\n: {'\n' in SUPABASE_URL}")
-            print(f"[存储服务] SUPABASE_URL 包含 \\r: {'\r' in SUPABASE_URL}")
-            print(f"[存储服务] SUPABASE_URL 首尾空白: {repr(SUPABASE_URL[:5] if len(SUPABASE_URL) >= 5 else SUPABASE_URL)} ... {repr(SUPABASE_URL[-5:] if len(SUPABASE_URL) >= 5 else SUPABASE_URL)}")
-        
-        # ========== 二次清理 URL：彻底去除所有空白字符和换行符 ==========
-        if SUPABASE_URL:
-            supabase_url = SUPABASE_URL.strip().replace('\n', '').replace('\r', '').rstrip('/')
-        else:
-            supabase_url = None
-        
-        supabase_key = SUPABASE_SERVICE_ROLE_KEY.strip().replace('\n', '').replace('\r', '') if SUPABASE_SERVICE_ROLE_KEY else None
+        try:
+            # ========== 诊断：打印环境变量详情 ==========
+            print(f"[存储服务] ========== Supabase 配置诊断 ==========")
+            print(f"[存储服务] SUPABASE_URL 原始值 (repr): {repr(SUPABASE_URL)}")
+            print(f"[存储服务] SUPABASE_URL 长度: {len(SUPABASE_URL) if SUPABASE_URL else 0}")
+            if SUPABASE_URL:
+                has_newline = '\n' in SUPABASE_URL
+                has_carriage = '\r' in SUPABASE_URL
+                print(f"[存储服务] SUPABASE_URL 包含 \\n: {has_newline}")
+                print(f"[存储服务] SUPABASE_URL 包含 \\r: {has_carriage}")
+                url_len = len(SUPABASE_URL)
+                if url_len >= 5:
+                    print(f"[存储服务] SUPABASE_URL 首尾空白: {repr(SUPABASE_URL[:5])} ... {repr(SUPABASE_URL[-5:])}")
+                else:
+                    print(f"[存储服务] SUPABASE_URL 首尾空白: {repr(SUPABASE_URL)}")
+            
+            # ========== 二次清理 URL：彻底去除所有空白字符和换行符 ==========
+            if SUPABASE_URL:
+                supabase_url = SUPABASE_URL.strip().replace('\n', '').replace('\r', '').rstrip('/')
+            else:
+                supabase_url = None
+            
+            supabase_key = SUPABASE_SERVICE_ROLE_KEY.strip().replace('\n', '').replace('\r', '') if SUPABASE_SERVICE_ROLE_KEY else None
+        except Exception as diag_error:
+            # 诊断代码本身出错，不影响主流程
+            print(f"[存储服务] ⚠️ 诊断代码执行出错: {type(diag_error).__name__}: {str(diag_error)}")
+            import traceback
+            traceback.print_exc()
+            # 使用简单的清理方式
+            try:
+                supabase_url = SUPABASE_URL.strip().rstrip('/') if SUPABASE_URL else None
+            except Exception:
+                supabase_url = None
+            try:
+                supabase_key = SUPABASE_SERVICE_ROLE_KEY.strip() if SUPABASE_SERVICE_ROLE_KEY else None
+            except Exception:
+                supabase_key = None
         
         print(f"[存储服务] SUPABASE_URL 清理后 (repr): {repr(supabase_url)}")
         print(f"[存储服务] SUPABASE_URL 清理后长度: {len(supabase_url) if supabase_url else 0}")
@@ -80,21 +101,28 @@ def get_supabase_client() -> Any:
             )
         
         # ========== DNS 探测：尝试解析 Supabase 域名 ==========
+        domain = None
         try:
             parsed_url = urlparse(supabase_url)
             domain = parsed_url.netloc
-            print(f"[存储服务] 从 URL 提取的域名: {domain}")
-            
-            # 尝试 DNS 解析
-            print(f"[存储服务] 开始 DNS 探测: {domain}")
-            ip_address = socket.gethostbyname(domain)
-            print(f"[存储服务] ✅ DNS 探测成功: {domain} -> {ip_address}")
+            if domain:
+                print(f"[存储服务] 从 URL 提取的域名: {domain}")
+                
+                # 尝试 DNS 解析
+                print(f"[存储服务] 开始 DNS 探测: {domain}")
+                ip_address = socket.gethostbyname(domain)
+                print(f"[存储服务] ✅ DNS 探测成功: {domain} -> {ip_address}")
+            else:
+                print(f"[存储服务] ⚠️ 无法从 URL 中提取域名: {supabase_url}")
         except socket.gaierror as e:
-            print(f"[存储服务] ❌ DNS 探测失败：无法解析 Supabase 域名 {domain}")
+            domain_name = domain if domain else "未知域名"
+            print(f"[存储服务] ❌ DNS 探测失败：无法解析 Supabase 域名 {domain_name}")
             print(f"[存储服务] DNS 错误详情: {type(e).__name__}: {str(e)}")
             # DNS 失败不阻止继续，可能是网络问题，让客户端库自己处理
         except Exception as e:
+            domain_name = domain if domain else "未知域名"
             print(f"[存储服务] ⚠️ DNS 探测时发生其他错误: {type(e).__name__}: {str(e)}")
+            print(f"[存储服务] 错误发生在域名: {domain_name}")
             # 其他错误也不阻止继续
         
         if create_client is None:
