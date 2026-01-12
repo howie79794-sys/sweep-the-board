@@ -15,6 +15,7 @@ from services.storage import (
     upload_avatar,
     delete_avatar,
     get_public_url,
+    normalize_avatar_url,
     ensure_bucket_exists
 )
 
@@ -30,5 +31,6 @@ __all__ = [
     "upload_avatar",
     "delete_avatar",
     "get_public_url",
+    "normalize_avatar_url",
     "ensure_bucket_exists"
 ]

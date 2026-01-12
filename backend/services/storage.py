@@ -13,10 +13,22 @@ except ImportError:
     create_client = None
     print("[存储服务] 警告: supabase 库未安装")
 
+# 检查是否有异步客户端
+try:
+    from supabase import acreate_client, AsyncClient
+    ASYNC_SUPABASE_AVAILABLE = True
+except ImportError:
+    ASYNC_SUPABASE_AVAILABLE = False
+    AsyncClient = Any
+    acreate_client = None
+
 from config import SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 
 # Supabase Storage bucket 名称
 AVATARS_BUCKET = "avatars"
+
+# 默认占位图 URL（用于旧路径兼容）
+DEFAULT_AVATAR_URL = "https://via.placeholder.com/150?text=Avatar"
 
 # 全局 Supabase 客户端（延迟初始化）
 _supabase_client: Optional[Any] = None
@@ -67,7 +79,37 @@ def get_public_url(file_path: str) -> str:
     return public_url
 
 
-def upload_avatar(file_content: bytes, file_name: str) -> str:
+def normalize_avatar_url(avatar_url: Optional[str]) -> Optional[str]:
+    """
+    标准化头像 URL，处理旧路径兼容
+    
+    Args:
+        avatar_url: 原始头像 URL（可能是旧路径或新 URL）
+        
+    Returns:
+        标准化后的头像 URL（如果是旧路径则返回默认占位图）
+    """
+    if not avatar_url:
+        return None
+    
+    # 如果是旧的本地路径（/avatars/ 开头），返回默认占位图
+    if avatar_url.startswith("/avatars/"):
+        print(f"[存储服务] 检测到旧路径头像: {avatar_url}，返回默认占位图")
+        return DEFAULT_AVATAR_URL
+    
+    # 如果是完整的 Supabase Storage URL，直接返回
+    if avatar_url.startswith("http") and "storage/v1/object/public" in avatar_url:
+        return avatar_url
+    
+    # 其他情况（可能是相对路径或其他格式），返回默认占位图
+    if not avatar_url.startswith("http"):
+        print(f"[存储服务] 检测到非标准路径头像: {avatar_url}，返回默认占位图")
+        return DEFAULT_AVATAR_URL
+    
+    return avatar_url
+
+
+async def upload_avatar(file_content: bytes, file_name: str) -> str:
     """
     上传头像到 Supabase Storage 的 avatars bucket
     
@@ -88,7 +130,7 @@ def upload_avatar(file_content: bytes, file_name: str) -> str:
         # 上传文件到 Supabase Storage
         # file_name 作为文件路径（相对于 bucket）
         # 使用 upsert=True 允许覆盖已存在的文件
-        response = client.storage.from_(AVATARS_BUCKET).upload(
+        upload_result = client.storage.from_(AVATARS_BUCKET).upload(
             path=file_name,
             file=file_content,
             file_options={
@@ -101,6 +143,10 @@ def upload_avatar(file_content: bytes, file_name: str) -> str:
                 "upsert": "true"  # 允许覆盖已存在的文件
             }
         )
+        
+        # 检查返回结果是否是协程（Supabase 2.0+ 可能返回协程）
+        if hasattr(upload_result, '__await__'):
+            upload_result = await upload_result
         
         # Supabase Python 客户端在成功时返回数据，失败时抛出异常
         # 如果没有异常，说明上传成功
@@ -116,7 +162,7 @@ def upload_avatar(file_content: bytes, file_name: str) -> str:
         raise
 
 
-def delete_avatar(file_path: str) -> bool:
+async def delete_avatar(file_path: str) -> bool:
     """
     删除 Supabase Storage 中的头像文件
     
@@ -144,12 +190,13 @@ def delete_avatar(file_path: str) -> bool:
         client = get_supabase_client()
         
         # 删除文件
-        response = client.storage.from_(AVATARS_BUCKET).remove([file_path])
-        
-        # 检查删除是否成功
-        if response.get("error"):
-            error_msg = response.get("error", {}).get("message", "未知错误")
-            print(f"[存储服务] 删除头像失败: {error_msg}")
+        try:
+            remove_result = client.storage.from_(AVATARS_BUCKET).remove([file_path])
+            # 检查返回结果是否是协程（Supabase 2.0+ 可能返回协程）
+            if hasattr(remove_result, '__await__'):
+                remove_result = await remove_result
+        except Exception as delete_error:
+            print(f"[存储服务] 删除头像失败: {str(delete_error)}")
             return False
         
         print(f"[存储服务] 头像删除成功: {file_path}")

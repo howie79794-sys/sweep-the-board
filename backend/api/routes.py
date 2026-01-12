@@ -15,7 +15,7 @@ from database.config import get_db
 from database.models import User, Asset, MarketData, Ranking
 from services.market_data import update_asset_data, update_all_assets_data
 from services.ranking import save_rankings, get_or_set_baseline_price
-from services.storage import upload_avatar, delete_avatar
+from services.storage import upload_avatar, delete_avatar, normalize_avatar_url
 from config import MAX_UPLOAD_SIZE, ALLOWED_EXTENSIONS, BASELINE_DATE
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -129,6 +129,10 @@ async def get_users(
 ):
     """获取所有用户列表"""
     users = db.query(User).filter(User.is_active == True).offset(skip).limit(limit).all()
+    # 处理旧路径头像 URL
+    for user in users:
+        if user.avatar_url:
+            user.avatar_url = normalize_avatar_url(user.avatar_url)
     return users
 
 
@@ -138,6 +142,9 @@ async def get_user(user_id: int, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
+    # 处理旧路径头像 URL
+    if user.avatar_url:
+        user.avatar_url = normalize_avatar_url(user.avatar_url)
     return user
 
 
@@ -148,6 +155,9 @@ async def create_user(user: UserCreate, db: Session = Depends(get_db)):
     db.add(db_user)
     db.commit()
     db.refresh(db_user)
+    # 处理旧路径头像 URL
+    if db_user.avatar_url:
+        db_user.avatar_url = normalize_avatar_url(db_user.avatar_url)
     return db_user
 
 
@@ -168,6 +178,9 @@ async def update_user(
     
     db.commit()
     db.refresh(db_user)
+    # 处理旧路径头像 URL
+    if db_user.avatar_url:
+        db_user.avatar_url = normalize_avatar_url(db_user.avatar_url)
     return db_user
 
 
@@ -216,14 +229,14 @@ async def upload_avatar(
         if db_user.avatar_url:
             # 检查是否是 Supabase Storage URL
             if db_user.avatar_url.startswith("http") and "storage/v1/object/public" in db_user.avatar_url:
-                delete_avatar(db_user.avatar_url)
+                await delete_avatar(db_user.avatar_url)
             # 如果是旧的本地路径，也尝试删除（兼容旧数据）
             elif db_user.avatar_url.startswith("/avatars/"):
                 # 旧数据，不删除（因为可能已经不存在了）
                 pass
         
         # 上传到 Supabase Storage
-        public_url = upload_avatar(file_content, file_name)
+        public_url = await upload_avatar(file_content, file_name)
         
         # 更新用户头像URL（存储完整的 Supabase Storage 公网 URL）
         db_user.avatar_url = public_url
@@ -275,7 +288,7 @@ async def get_assets(
             "start_date": asset.start_date,
             "end_date": asset.end_date,
             "created_at": asset.created_at,
-            "user": {"id": asset.user.id, "name": asset.user.name, "avatar_url": asset.user.avatar_url} if asset.user else None
+            "user": {"id": asset.user.id, "name": asset.user.name, "avatar_url": normalize_avatar_url(asset.user.avatar_url)} if asset.user else None
         }
         result.append(asset_dict)
     
@@ -290,7 +303,7 @@ async def get_asset(asset_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="资产不存在")
     
     if asset.user:
-        asset.user = {"id": asset.user.id, "name": asset.user.name, "avatar_url": asset.user.avatar_url}
+        asset.user = {"id": asset.user.id, "name": asset.user.name, "avatar_url": normalize_avatar_url(asset.user.avatar_url)}
     
     return asset
 
@@ -767,7 +780,7 @@ async def get_rankings(
             "user": {
                 "id": ranking.user.id,
                 "name": ranking.user.name,
-                "avatar_url": ranking.user.avatar_url,
+                "avatar_url": normalize_avatar_url(ranking.user.avatar_url),
                 "created_at": ranking.user.created_at.isoformat() if ranking.user.created_at else None,
                 "is_active": ranking.user.is_active,
             }
@@ -796,7 +809,7 @@ async def get_rankings(
             "user": {
                 "id": ranking.user.id,
                 "name": ranking.user.name,
-                "avatar_url": ranking.user.avatar_url,
+                "avatar_url": normalize_avatar_url(ranking.user.avatar_url),
                 "created_at": ranking.user.created_at.isoformat() if ranking.user.created_at else None,
                 "is_active": ranking.user.is_active,
             },
