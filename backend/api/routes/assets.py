@@ -19,7 +19,7 @@ class AssetCreate(BaseModel):
     code: str
     name: str
     baseline_date: Optional[str] = "2026-01-05"
-    start_date: Optional[str] = "2026-01-06"
+    start_date: Optional[str] = "2026-01-05"
     end_date: Optional[str] = "2026-12-31"
 
 

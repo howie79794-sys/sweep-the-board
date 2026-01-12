@@ -15,7 +15,7 @@ class Asset(Base):
     name = Column(String, nullable=False)
     baseline_price = Column(Float, nullable=True)
     baseline_date = Column(Date, default="2026-01-05")
-    start_date = Column(Date, default="2026-01-06")
+    start_date = Column(Date, default="2026-01-05")
     end_date = Column(Date, default="2026-12-31")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

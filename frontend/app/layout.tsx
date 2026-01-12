@@ -47,7 +47,7 @@ export default function RootLayout({
           </main>
           <footer className="border-t mt-12 py-4">
             <div className="container mx-auto px-4 text-center text-muted-foreground text-sm">
-              <p>数据追踪期间：2026年1月6日 - 2026年12月31日 | 基准日期：2026年1月5日</p>
+              <p>数据追踪期间：2026年1月5日 - 2026年12月31日 | 基准日期：2026年1月5日</p>
             </div>
           </footer>
         </div>

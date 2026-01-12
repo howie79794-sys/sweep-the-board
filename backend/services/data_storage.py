@@ -118,7 +118,7 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
         print(f"[数据更新] 代码格式转换: {asset.code} -> {normalized_code}")
     
     # 确定更新日期范围
-    start_date = asset.start_date.isoformat() if asset.start_date else "2026-01-06"
+    start_date = asset.start_date.isoformat() if asset.start_date else "2026-01-05"
     end_date = asset.end_date.isoformat() if asset.end_date else "2026-12-31"
     
     print(f"[数据更新] 资产配置的日期范围: {start_date} 至 {end_date}")

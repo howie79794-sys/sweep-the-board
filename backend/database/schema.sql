@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS assets (
     name TEXT NOT NULL,
     baseline_price REAL,
     baseline_date DATE DEFAULT '2026-01-05',
-    start_date DATE DEFAULT '2026-01-06',
+    start_date DATE DEFAULT '2026-01-05',
     end_date DATE DEFAULT '2026-12-31',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
