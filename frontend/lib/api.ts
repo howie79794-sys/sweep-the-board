@@ -96,7 +96,18 @@ export const userAPI = {
       method: 'POST',
       body: formData,
     })
-    if (!response.ok) throw new Error('上传失败')
+    if (!response.ok) {
+      // 尝试从响应中提取错误信息
+      let errorMessage = '上传失败'
+      try {
+        const errorData = await response.json()
+        errorMessage = errorData.detail || errorData.message || errorMessage
+      } catch {
+        // 如果响应不是JSON，使用状态文本
+        errorMessage = response.statusText || errorMessage
+      }
+      throw new Error(errorMessage)
+    }
     return response.json()
   },
 }

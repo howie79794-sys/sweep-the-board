@@ -17,6 +17,9 @@ export default function AdminPage() {
   const [editingUser, setEditingUser] = useState<User | null>(null)
   const [editingAsset, setEditingAsset] = useState<Asset | null>(null)
   const [userForm, setUserForm] = useState({ name: "" })
+  const [uploadingAvatar, setUploadingAvatar] = useState(false)
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null)
+  const [selectedAvatarFile, setSelectedAvatarFile] = useState<File | null>(null)
   const [assetForm, setAssetForm] = useState({
     user_id: "",
     asset_type: "stock",
@@ -98,10 +101,27 @@ export default function AdminPage() {
     try {
       setLoading(true)
       setError(null)
-      await userAPI.create({ name: userForm.name.trim() })
+      
+      // 先创建用户
+      const newUser = await userAPI.create({ name: userForm.name.trim() })
+      
+      // 如果选择了头像，上传头像
+      if (selectedAvatarFile && newUser.id) {
+        try {
+          await handleAvatarUpload(newUser.id)
+        } catch (avatarErr: any) {
+          // 头像上传失败不影响用户创建，但显示错误提示
+          console.error("头像上传失败:", avatarErr)
+          setError(`用户创建成功，但头像上传失败：${avatarErr?.message || "未知错误"}`)
+        }
+      }
+      
+      // 清理状态
       setShowUserDialog(false)
       setUserForm({ name: "" })
       setEditingUser(null)
+      clearAvatarSelection()
+      
       await loadUsers()
     } catch (err: any) {
       setError(err.message || "创建用户失败")
@@ -113,6 +133,21 @@ export default function AdminPage() {
   const handleEditUser = (user: User) => {
     setEditingUser(user)
     setUserForm({ name: user.name })
+    
+    // 清理之前可能存在的blob URL
+    if (avatarPreview && avatarPreview.startsWith('blob:')) {
+      URL.revokeObjectURL(avatarPreview)
+    }
+    
+    // 加载当前头像预览（如果存在）
+    if (user.avatar_url) {
+      setAvatarPreview(user.avatar_url)
+    } else {
+      setAvatarPreview(null)
+    }
+    
+    // 清空选中的新文件
+    setSelectedAvatarFile(null)
     setShowUserDialog(true)
   }
 
@@ -124,10 +159,27 @@ export default function AdminPage() {
     try {
       setLoading(true)
       setError(null)
+      
+      // 先更新用户信息
       await userAPI.update(editingUser.id, { name: userForm.name.trim() })
+      
+      // 如果选择了新头像，上传头像
+      if (selectedAvatarFile) {
+        try {
+          await handleAvatarUpload(editingUser.id)
+        } catch (avatarErr: any) {
+          // 头像上传失败不影响用户更新，但显示错误提示
+          console.error("头像上传失败:", avatarErr)
+          setError(`用户信息更新成功，但头像上传失败：${avatarErr?.message || "未知错误"}`)
+        }
+      }
+      
+      // 清理状态
       setShowUserDialog(false)
       setUserForm({ name: "" })
       setEditingUser(null)
+      clearAvatarSelection()
+      
       await loadUsers()
     } catch (err: any) {
       setError(err.message || "更新用户失败")
@@ -149,6 +201,80 @@ export default function AdminPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleAvatarSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    // 验证文件类型
+    const allowedExtensions = ['.jpg', '.jpeg', '.png', '.webp']
+    const fileExtension = '.' + file.name.split('.').pop()?.toLowerCase()
+    if (!allowedExtensions.includes(fileExtension)) {
+      setError(`不支持的文件格式。支持格式：${allowedExtensions.join(', ')}`)
+      event.target.value = '' // 清空input
+      return
+    }
+
+    // 验证文件大小（5MB）
+    const maxSize = 5 * 1024 * 1024 // 5MB
+    if (file.size > maxSize) {
+      setError(`文件大小超过限制。最大大小：5MB`)
+      event.target.value = '' // 清空input
+      return
+    }
+
+    // 存储文件并生成预览
+    setSelectedAvatarFile(file)
+    setError(null)
+    
+    // 创建预览URL
+    const previewUrl = URL.createObjectURL(file)
+    setAvatarPreview(previewUrl)
+  }
+
+  const handleAvatarUpload = async (userId: number) => {
+    if (!selectedAvatarFile) {
+      setError("请先选择头像文件")
+      return
+    }
+
+    try {
+      setUploadingAvatar(true)
+      setError(null)
+      const result = await userAPI.uploadAvatar(userId, selectedAvatarFile)
+      
+      // 清理预览URL（如果是新选择的文件）
+      if (avatarPreview && avatarPreview.startsWith('blob:')) {
+        URL.revokeObjectURL(avatarPreview)
+      }
+      
+      // 更新预览为上传后的头像URL
+      if (result.avatar_url) {
+        setAvatarPreview(result.avatar_url)
+      }
+      
+      // 重置选中的文件（但保留预览）
+      setSelectedAvatarFile(null)
+      
+      // 刷新用户列表
+      await loadUsers()
+    } catch (err: any) {
+      const errorMessage = err?.message || "上传头像失败，请检查网络连接或文件格式"
+      setError(errorMessage)
+      throw err // 重新抛出以便调用者处理
+    } finally {
+      setUploadingAvatar(false)
+    }
+  }
+
+  const clearAvatarSelection = () => {
+    // 清理预览URL（只清理blob URL，不清理服务器URL）
+    if (avatarPreview && avatarPreview.startsWith('blob:')) {
+      URL.revokeObjectURL(avatarPreview)
+    }
+    setAvatarPreview(null)
+    setSelectedAvatarFile(null)
   }
 
   const handleCreateAsset = async () => {
@@ -298,6 +424,61 @@ export default function AdminPage() {
               <div className="bg-background border rounded-lg p-6 w-full max-w-md">
                 <h3 className="text-xl font-bold mb-4">{editingUser ? "编辑用户" : "添加用户"}</h3>
                 <div className="space-y-4">
+                  {/* 头像上传区域 */}
+                  <div>
+                    <label className="block text-sm font-medium mb-2">头像</label>
+                    <div className="flex items-center gap-4">
+                      {/* 头像预览 */}
+                      <div className="flex-shrink-0">
+                        {avatarPreview ? (
+                          <img
+                            src={avatarPreview}
+                            alt="头像预览"
+                            className="w-20 h-20 rounded-full object-cover border-2 border-border"
+                          />
+                        ) : (
+                          <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center border-2 border-border">
+                            <span className="text-muted-foreground text-sm">无头像</span>
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* 文件选择和上传按钮 */}
+                      <div className="flex-1 space-y-2">
+                        <div className="flex gap-2">
+                          <label className="px-4 py-2 border rounded hover:bg-secondary cursor-pointer text-sm">
+                            选择文件
+                            <input
+                              type="file"
+                              accept=".jpg,.jpeg,.png,.webp"
+                              onChange={handleAvatarSelect}
+                              className="hidden"
+                              disabled={loading || uploadingAvatar}
+                            />
+                          </label>
+                          {selectedAvatarFile && editingUser && (
+                            <button
+                              onClick={() => handleAvatarUpload(editingUser.id)}
+                              disabled={loading || uploadingAvatar}
+                              className="px-4 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 text-sm"
+                            >
+                              {uploadingAvatar ? "上传中..." : "上传头像"}
+                            </button>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          支持格式: jpg, jpeg, png, webp | 最大大小: 5MB
+                        </p>
+                        {selectedAvatarFile && (
+                          <p className="text-xs text-muted-foreground">
+                            已选择: {selectedAvatarFile.name} ({(selectedAvatarFile.size / 1024 / 1024).toFixed(2)} MB)
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* 用户名输入 */}
                   <div>
                     <label className="block text-sm font-medium mb-2">用户名</label>
                     <input
@@ -307,8 +488,11 @@ export default function AdminPage() {
                       className="w-full px-3 py-2 border rounded-md"
                       placeholder="请输入用户名"
                       autoFocus
+                      disabled={loading || uploadingAvatar}
                     />
                   </div>
+                  
+                  {/* 操作按钮 */}
                   <div className="flex gap-2 justify-end">
                     <button
                       onClick={() => {
@@ -316,18 +500,21 @@ export default function AdminPage() {
                         setUserForm({ name: "" })
                         setEditingUser(null)
                         setError(null)
+                        clearAvatarSelection()
                       }}
                       className="px-4 py-2 border rounded hover:bg-secondary"
-                      disabled={loading}
+                      disabled={loading || uploadingAvatar}
                     >
                       取消
                     </button>
                     <button
                       onClick={editingUser ? handleUpdateUser : handleCreateUser}
                       className="px-4 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50"
-                      disabled={loading}
+                      disabled={loading || uploadingAvatar}
                     >
-                      {loading ? (editingUser ? "更新中..." : "创建中...") : (editingUser ? "更新" : "创建")}
+                      {loading || uploadingAvatar
+                        ? (editingUser ? "更新中..." : "创建中...")
+                        : (editingUser ? "更新" : "创建")}
                     </button>
                   </div>
                 </div>
