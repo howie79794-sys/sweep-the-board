@@ -6,8 +6,12 @@ const getAPIBaseURL = () => {
     // 浏览器环境：使用相对路径，通过Next.js rewrites代理到后端
     return ''
   }
-  // 服务器端渲染：使用环境变量或默认值
-  return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+  // 服务器端渲染：优先使用环境变量
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || process.env.API_URL || 'http://localhost:8000'
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[API] 使用后端地址:', apiUrl)
+  }
+  return apiUrl
 }
 
 const API_BASE_URL = getAPIBaseURL()
@@ -18,13 +22,32 @@ async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> 
     ? endpoint 
     : `${API_BASE_URL}${endpoint}`
   
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
-  })
+  let response: Response
+  try {
+    response = await fetch(url, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...options?.headers,
+      },
+    })
+  } catch (fetchError: any) {
+    // 处理网络错误（ECONNREFUSED, Failed to fetch 等）
+    const errorMessage = fetchError.message || String(fetchError)
+    if (
+      errorMessage.includes('ECONNREFUSED') ||
+      errorMessage.includes('Failed to fetch') ||
+      errorMessage.includes('NetworkError') ||
+      errorMessage.includes('ERR_CONNECTION_REFUSED')
+    ) {
+      const backendUrl = API_BASE_URL || 'http://localhost:8000'
+      throw new Error(
+        `无法连接到后端服务 (${backendUrl})。请确保后端服务正在运行。\n` +
+        `错误详情: ${errorMessage}`
+      )
+    }
+    throw fetchError
+  }
 
   if (!response.ok) {
     let errorMessage = '请求失败'
@@ -69,6 +92,40 @@ async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> 
   }
 
   return response.json()
+}
+
+/**
+ * 检查后端服务健康状态
+ * @returns Promise<boolean> 后端服务是否可用
+ */
+export async function checkBackendHealth(): Promise<boolean> {
+  try {
+    const baseUrl = getAPIBaseURL()
+    const healthUrl = baseUrl ? `${baseUrl}/api/health` : '/api/health'
+    
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 5000) // 5秒超时
+    
+    try {
+      const response = await fetch(healthUrl, {
+        method: 'GET',
+        signal: controller.signal,
+      })
+      clearTimeout(timeoutId)
+      return response.ok
+    } catch (fetchError: any) {
+      clearTimeout(timeoutId)
+      if (fetchError.name === 'AbortError') {
+        console.error('[API] 后端健康检查超时')
+      } else {
+        throw fetchError
+      }
+      return false
+    }
+  } catch (error: any) {
+    console.error('[API] 后端服务不可用:', error.message || error)
+    return false
+  }
 }
 
 // 用户API

@@ -21,8 +21,22 @@ echo "   API地址: http://localhost:8000"
 echo "   API文档: http://localhost:8000/docs"
 echo ""
 
-# 等待后端启动
-sleep 3
+# 等待后端启动并检查健康状态
+echo "⏳ 等待后端服务启动..."
+for i in {1..30}; do
+  if curl -s http://localhost:8000/api/health > /dev/null 2>&1; then
+    echo "✅ 后端服务已就绪"
+    break
+  fi
+  if [ $i -eq 30 ]; then
+    echo "❌ 后端服务启动失败，请检查后端日志"
+    echo "   尝试访问: http://localhost:8000/api/health"
+    exit 1
+  fi
+  echo "   等待后端启动... ($i/30)"
+  sleep 1
+done
+echo ""
 
 # 启动前端
 echo "🎨 启动前端开发服务器..."

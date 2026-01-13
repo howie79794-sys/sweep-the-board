@@ -5,14 +5,19 @@ const nextConfig = {
   
   // API 代理转发 - 在所有环境中生效
   async rewrites() {
+    // 从环境变量读取后端地址，默认为 localhost:8000
+    const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+    
+    console.log('[Next.js Config] 使用后端地址:', backendUrl)
+    
     return [
       {
         source: '/api/:path*',
-        destination: 'http://localhost:8000/api/:path*',
+        destination: `${backendUrl}/api/:path*`,
       },
       {
         source: '/avatars/:path*',
-        destination: 'http://localhost:8000/avatars/:path*',
+        destination: `${backendUrl}/avatars/:path*`,
       },
     ]
   },
