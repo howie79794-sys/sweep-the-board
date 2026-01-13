@@ -269,9 +269,43 @@ def fetch_stock_data_yfinance(code: str, start_date: str, end_date: str, use_rea
         symbol = convert_to_yfinance_symbol(code)
         print(f"[市场数据] [yfinance] 转换后的符号: {symbol}")
         
-        # 使用 yfinance 获取数据（添加异常捕获，防止网络错误导致崩溃）
+        ticker = yf.Ticker(symbol)
+        
+        # 优先尝试使用 fast_info 获取实时价格（特别是查询今天的数据时）
+        if end_date >= today_str:
+            try:
+                fast_info = ticker.fast_info
+                last_price = fast_info.get('lastPrice') or fast_info.get('regularMarketPrice') or fast_info.get('previousClose')
+                
+                if last_price and not pd.isna(last_price):
+                    print(f"[市场数据] [yfinance] 成功获取实时价格: {last_price}")
+                    
+                    # 构造 DataFrame
+                    data = {
+                        'date': [today_str],
+                        'open': [fast_info.get('open') or fast_info.get('previousClose') or None],
+                        'close': [float(last_price)],
+                        'high': [fast_info.get('dayHigh') or fast_info.get('regularMarketDayHigh') or None],
+                        'low': [fast_info.get('dayLow') or fast_info.get('regularMarketDayLow') or None],
+                        'volume': [fast_info.get('volume') or fast_info.get('regularMarketVolume') or None],
+                        'turnover': [None],
+                        'amplitude': [None],
+                        'change_pct': [None],
+                        'change_amount': [None],
+                        'turnover_rate': [None]
+                    }
+                    
+                    df = pd.DataFrame(data)
+                    print(f"[市场数据] [yfinance] 使用 fast_info 数据，日期: {today_str}")
+                    return df
+            except AttributeError as e:
+                # fast_info 在某些环境下可能不存在
+                print(f"[市场数据] [yfinance] fast_info 不可用: {str(e)}，降级使用 history()")
+            except Exception as e:
+                print(f"[市场数据] [yfinance] fast_info 获取失败: {type(e).__name__}: {str(e)}，降级使用 history()")
+        
+        # 降级使用 history() 方法
         try:
-            ticker = yf.Ticker(symbol)
             df = ticker.history(start=start_date, end=end_date)
         except Exception as e:
             error_type = type(e).__name__
@@ -286,7 +320,7 @@ def fetch_stock_data_yfinance(code: str, start_date: str, end_date: str, use_rea
             return None
         
         if df is None or df.empty:
-            print(f"[市场数据] [yfinance] 未获取到数据")
+            print(f"[市场数据] [yfinance] history() 未获取到数据")
             return None
         
         print(f"[市场数据] [yfinance] 成功获取 {len(df)} 条数据")
