@@ -152,29 +152,19 @@ export function AssetSnapshotTable({ className }: { className?: string }) {
                 {item.code} {item.name}
               </td>
               <td className="border p-2">
-                {item.baseline_price !== null
-                  ? formatNumber(item.baseline_price)
-                  : "-"}
+                {formatNumber(item.baseline_price)}
               </td>
               <td className="border p-2">
-                {item.latest_close_price !== null
-                  ? formatNumber(item.latest_close_price)
-                  : "-"}
+                {formatNumber(item.latest_close_price)}
               </td>
               <td className="border p-2">
-                {item.latest_market_cap !== null
-                  ? formatNumber(item.latest_market_cap)
-                  : "-"}
+                {formatNumber(item.latest_market_cap)}
               </td>
               <td className="border p-2">
-                {item.eps_forecast !== null
-                  ? formatNumber(item.eps_forecast)
-                  : "-"}
+                {formatNumber(item.eps_forecast)}
               </td>
               <td className="border p-2">
-                {item.change_rate !== null
-                  ? formatPercent(item.change_rate)
-                  : "-"}
+                {formatPercent(item.change_rate)}
               </td>
             </tr>
           ))}

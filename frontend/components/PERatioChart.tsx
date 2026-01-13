@@ -170,9 +170,11 @@ export function PERatioChart({
               }}
             />
             <Tooltip
-              formatter={(value: number | string, name: string) => {
+              formatter={(value: number | string | null, name: string) => {
+                if (value === null || value === undefined) return "--"
                 const numValue = typeof value === 'number' ? value : parseFloat(String(value))
-                if (isNaN(numValue)) return value
+                if (isNaN(numValue)) return "--"
+                if (numValue === 0) return "--"
                 return formatNumber(numValue)
               }}
             />

@@ -676,13 +676,15 @@ async def get_all_assets_chart_data(
             else:
                 data_point["change_rate"] = None
             
-            # 添加 PE 和 PB 数据
-            data_point["pe_ratio"] = md.pe_ratio
-            data_point["pb_ratio"] = md.pb_ratio
+            # 添加所有财务指标数据 - 显式赋值，确保字段存在
+            data_point["pe_ratio"] = md.pe_ratio if md.pe_ratio is not None else None
+            data_point["pb_ratio"] = md.pb_ratio if md.pb_ratio is not None else None
+            data_point["market_cap"] = md.market_cap if md.market_cap is not None else None
+            data_point["eps_forecast"] = md.eps_forecast if md.eps_forecast is not None else None
             
             # 调试：打印第一条数据的财务指标
             if len(data_points) == 0:
-                print(f"[API] 图表数据点财务指标: PE={md.pe_ratio}, PB={md.pb_ratio} (资产: {asset.code})")
+                print(f"[API] 图表数据点财务指标 (资产: {asset.code}): PE={md.pe_ratio}, PB={md.pb_ratio}, 市值={md.market_cap}, EPS={md.eps_forecast}")
             
             data_points.append(data_point)
         
@@ -756,6 +758,16 @@ async def get_snapshot_data(db: Session = Depends(get_db)):
         if latest_data and baseline_price and baseline_price > 0:
             change_rate = ((latest_data.close_price - baseline_price) / baseline_price) * 100
         
+        # 显式获取财务指标，确保字段存在
+        pe_ratio = latest_data.pe_ratio if latest_data and latest_data.pe_ratio is not None else None
+        pb_ratio = latest_data.pb_ratio if latest_data and latest_data.pb_ratio is not None else None
+        market_cap = latest_data.market_cap if latest_data and latest_data.market_cap is not None else None
+        eps_forecast = latest_data.eps_forecast if latest_data and latest_data.eps_forecast is not None else None
+        
+        # 调试日志
+        if latest_data:
+            print(f"[API] Snapshot财务指标 (资产: {asset.code}): PE={pe_ratio}, PB={pb_ratio}, 市值={market_cap}, EPS={eps_forecast}")
+        
         result.append({
             "asset_id": asset.id,
             "code": asset.code,
@@ -769,11 +781,11 @@ async def get_snapshot_data(db: Session = Depends(get_db)):
             "baseline_date": baseline_date_obj.isoformat(),
             "latest_date": latest_trading_date.isoformat(),
             "latest_close_price": latest_data.close_price if latest_data else None,
-            "latest_market_cap": latest_data.market_cap if latest_data else None,
-            "eps_forecast": latest_data.eps_forecast if latest_data else None,
+            "latest_market_cap": market_cap,
+            "eps_forecast": eps_forecast,
             "change_rate": change_rate,
-            "pe_ratio": latest_data.pe_ratio if latest_data else None,
-            "pb_ratio": latest_data.pb_ratio if latest_data else None,
+            "pe_ratio": pe_ratio,
+            "pb_ratio": pb_ratio,
         })
     
     return result

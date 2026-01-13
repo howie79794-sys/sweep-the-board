@@ -226,13 +226,30 @@ def fetch_financial_indicators_yfinance(ticker: yf.Ticker) -> Dict[str, float]:
                 pass
         
         # 获取 marketCap (总市值)，转换为亿元
+        # 检查多个可能的字段名
+        market_cap_value = None
+        
+        # 优先尝试 marketCap
         if 'marketCap' in info and info['marketCap'] is not None:
             try:
-                market_cap = float(info['marketCap'])
-                # 转换为亿元（除以 100,000,000）
-                indicators["market_cap"] = market_cap / 100000000.0
+                market_cap_value = float(info['marketCap'])
             except (ValueError, TypeError):
                 pass
+        
+        # 如果上面没有获取到，尝试 market_cap (下划线格式)
+        if market_cap_value is None and 'market_cap' in info and info['market_cap'] is not None:
+            try:
+                market_cap_value = float(info['market_cap'])
+            except (ValueError, TypeError):
+                pass
+        
+        # 如果获取到市值且大于0，转换为亿元
+        if market_cap_value is not None and market_cap_value > 0:
+            # 转换为亿元（除以 100,000,000）
+            indicators["market_cap"] = market_cap_value / 100000000.0
+            print(f"[市场数据] [财务指标] 市值转换: 原始值={market_cap_value}, 转换后={indicators['market_cap']:.2f}亿元")
+        else:
+            print(f"[市场数据] [财务指标] 警告: 市值获取失败或为0 (marketCap={info.get('marketCap')}, market_cap={info.get('market_cap')})")
         
         # 获取 EPS 预测 - 尝试多个可能的字段名
         eps_value = None
@@ -260,8 +277,11 @@ def fetch_financial_indicators_yfinance(ticker: yf.Ticker) -> Dict[str, float]:
         
         if eps_value is not None:
             indicators["eps_forecast"] = eps_value
+        else:
+            print(f"[市场数据] [财务指标] 警告: EPS获取失败，尝试的字段: earningsEstimateNextYear={info.get('earningsEstimateNextYear')}, trailingEps={info.get('trailingEps')}, forwardEps={info.get('forwardEps')}")
         
-        print(f"[市场数据] [财务指标] 获取成功: PE={indicators['pe_ratio']}, PB={indicators['pb_ratio']}, 市值={indicators['market_cap']:.2f}亿元, EPS预测={indicators['eps_forecast']}")
+        # 打印获取结果（包括0值）
+        print(f"[市场数据] [财务指标] 获取结果: PE={indicators['pe_ratio']}, PB={indicators['pb_ratio']}, 市值={indicators['market_cap']:.2f}亿元, EPS预测={indicators['eps_forecast']}")
         
     except Exception as e:
         print(f"[市场数据] [财务指标] 获取失败: {type(e).__name__}: {str(e)}")
@@ -1192,15 +1212,26 @@ def store_market_data(
                 existing.turnover_rate = data.get("turnover_rate")
                 
                 # 显式赋值财务指标 - 如果数据中有值（包括0），则更新；如果为None，保持原值
-                # 使用 "pe_ratio" in data 来检查是否真的提供了这个字段（即使值为 None 或 0）
+                # 使用 "pe_ratio" in data 来检查是否真的提供了这个字段
+                # 注意：如果值为 0，可能是真实值，也可能是默认值，我们仍然更新
                 if "pe_ratio" in data:
-                    existing.pe_ratio = data["pe_ratio"]
+                    val = data["pe_ratio"]
+                    # 只有当值不是 None 时才更新（0 是有效值）
+                    if val is not None:
+                        existing.pe_ratio = val
                 if "pb_ratio" in data:
-                    existing.pb_ratio = data["pb_ratio"]
+                    val = data["pb_ratio"]
+                    if val is not None:
+                        existing.pb_ratio = val
                 if "market_cap" in data:
-                    existing.market_cap = data["market_cap"]
+                    val = data["market_cap"]
+                    # 市值：只有当值大于 0 时才更新（0 可能是计算错误）
+                    if val is not None and val > 0:
+                        existing.market_cap = val
                 if "eps_forecast" in data:
-                    existing.eps_forecast = data["eps_forecast"]
+                    val = data["eps_forecast"]
+                    if val is not None:
+                        existing.eps_forecast = val
                 
                 # 打印调试信息 - 显示更新前后的值
                 print(f"[市场数据] 更新财务指标 (日期={date_obj}): PE={existing.pe_ratio} (输入={data.get('pe_ratio')}), PB={existing.pb_ratio} (输入={data.get('pb_ratio')}), 市值={existing.market_cap} (输入={data.get('market_cap')}), EPS={existing.eps_forecast} (输入={data.get('eps_forecast')})")
@@ -1212,6 +1243,11 @@ def store_market_data(
                     print(f"[市场数据] 已处理 {idx}/{len(market_data_list)} 条数据 (更新)")
             else:
                 # 创建新数据
+                # 处理市值：如果为 0，设置为 None（避免存储无效数据）
+                market_cap_val = data.get("market_cap")
+                if market_cap_val is not None and market_cap_val == 0:
+                    market_cap_val = None
+                
                 market_data = MarketData(
                     asset_id=asset_id,
                     date=date_obj,
@@ -1220,7 +1256,7 @@ def store_market_data(
                     turnover_rate=data.get("turnover_rate"),
                     pe_ratio=data.get("pe_ratio"),
                     pb_ratio=data.get("pb_ratio"),
-                    market_cap=data.get("market_cap"),
+                    market_cap=market_cap_val,
                     eps_forecast=data.get("eps_forecast"),
                     additional_data=json.dumps(data.get("additional_data", {}), ensure_ascii=False) if data.get("additional_data") else None
                 )
