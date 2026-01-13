@@ -680,6 +680,10 @@ async def get_all_assets_chart_data(
             data_point["pe_ratio"] = md.pe_ratio
             data_point["pb_ratio"] = md.pb_ratio
             
+            # 调试：打印第一条数据的财务指标
+            if len(data_points) == 0:
+                print(f"[API] 图表数据点财务指标: PE={md.pe_ratio}, PB={md.pb_ratio} (资产: {asset.code})")
+            
             data_points.append(data_point)
         
         if data_points:  # 只有当有数据点时才添加到结果中
