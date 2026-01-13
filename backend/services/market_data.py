@@ -2,7 +2,7 @@
 专门存放调用外部接口（如 yfinance）获取市场数据的逻辑
 """
 import pandas as pd
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional, Dict, List
 import json
 import time
@@ -12,6 +12,36 @@ import traceback
 from sqlalchemy.orm import Session
 from database.models import Asset, MarketData
 from config import BASELINE_DATE
+
+
+def get_beijing_time() -> datetime:
+    """
+    获取当前北京时间 (CST, UTC+8)
+    
+    Returns:
+        datetime: 当前北京时间的 datetime 对象
+    """
+    utc_now = datetime.now(timezone.utc)
+    beijing_tz = timezone(timedelta(hours=8))
+    beijing_time = utc_now.astimezone(beijing_tz)
+    return beijing_time
+
+
+def is_trading_hours() -> bool:
+    """
+    判断当前是否在A股交易时间内（北京时间 09:15 - 15:30）
+    
+    Returns:
+        bool: True 表示在交易时间内，False 表示已收盘
+    """
+    beijing_time = get_beijing_time()
+    current_time = beijing_time.time()
+    
+    # A股交易时间：09:15 - 15:30（包含集合竞价和收盘）
+    market_open = datetime.strptime("09:15", "%H:%M").time()
+    market_close = datetime.strptime("15:30", "%H:%M").time()
+    
+    return market_open <= current_time <= market_close
 
 # 尝试导入 yfinance
 try:
@@ -68,7 +98,103 @@ def convert_to_yfinance_symbol(code: str) -> str:
         return f"{clean_code}.SS"
 
 
-def fetch_stock_data_yfinance(code: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
+def fetch_realtime_price_yfinance(code: str) -> Optional[pd.DataFrame]:
+    """
+    使用 yfinance 获取盘中实时价格（仅在交易时间内使用）
+    
+    Args:
+        code: 股票代码（支持多种格式）
+    
+    Returns:
+        pd.DataFrame 或 None（失败时）
+    """
+    if not YFINANCE_AVAILABLE:
+        return None
+    
+    try:
+        print(f"[市场数据] [yfinance实时] 尝试获取实时价格: code={code}")
+        
+        # 转换为 yfinance 格式
+        symbol = convert_to_yfinance_symbol(code)
+        
+        ticker = yf.Ticker(symbol)
+        
+        # 方法1: 尝试使用 fast_info 获取最新价格
+        try:
+            fast_info = ticker.fast_info
+            last_price = fast_info.get('lastPrice') or fast_info.get('regularMarketPrice')
+            
+            if last_price and not pd.isna(last_price):
+                beijing_time = get_beijing_time()
+                today_str = beijing_time.strftime('%Y-%m-%d')
+                
+                print(f"[市场数据] [yfinance实时] 通过 fast_info 获取到实时价格: {last_price}")
+                
+                # 构造 DataFrame
+                data = {
+                    'date': [today_str],
+                    'open': [None],
+                    'close': [float(last_price)],
+                    'high': [fast_info.get('dayHigh') or None],
+                    'low': [fast_info.get('dayLow') or None],
+                    'volume': [fast_info.get('volume') or None],
+                    'turnover': [None],
+                    'amplitude': [None],
+                    'change_pct': [None],
+                    'change_amount': [None],
+                    'turnover_rate': [None]
+                }
+                
+                df = pd.DataFrame(data)
+                print(f"[市场数据] [yfinance实时] 成功获取实时价格数据")
+                return df
+        except Exception as e:
+            print(f"[市场数据] [yfinance实时] fast_info 获取失败: {str(e)}")
+        
+        # 方法2: 尝试使用 history(period='1d') 获取今天的数据
+        try:
+            df = ticker.history(period='1d')
+            if df is not None and not df.empty:
+                # 重置索引，将 Date 作为列
+                df = df.reset_index()
+                
+                # 重命名列
+                column_mapping = {
+                    'Date': 'date',
+                    'Open': 'open',
+                    'High': 'high',
+                    'Low': 'low',
+                    'Close': 'close',
+                    'Volume': 'volume'
+                }
+                df = df.rename(columns={k: v for k, v in column_mapping.items() if k in df.columns})
+                
+                # 格式化日期为今天
+                beijing_time = get_beijing_time()
+                today_str = beijing_time.strftime('%Y-%m-%d')
+                if 'date' in df.columns:
+                    df['date'] = today_str
+                
+                # 添加缺失的列
+                expected_cols = ['date', 'open', 'close', 'high', 'low', 'volume', 'turnover', 'amplitude', 'change_pct', 'change_amount', 'turnover_rate']
+                for col in expected_cols:
+                    if col not in df.columns:
+                        df[col] = None
+                
+                df = df[expected_cols]
+                print(f"[市场数据] [yfinance实时] 通过 history(period='1d') 获取到实时数据")
+                return df
+        except Exception as e:
+            print(f"[市场数据] [yfinance实时] history(period='1d') 获取失败: {str(e)}")
+        
+        return None
+        
+    except Exception as e:
+        print(f"[市场数据] [yfinance实时] 获取实时价格失败: {type(e).__name__}: {str(e)}")
+        return None
+
+
+def fetch_stock_data_yfinance(code: str, start_date: str, end_date: str, use_realtime: bool = False) -> Optional[pd.DataFrame]:
     """
     使用 yfinance 获取A股股票数据（主数据源）
     
@@ -76,6 +202,7 @@ def fetch_stock_data_yfinance(code: str, start_date: str, end_date: str) -> Opti
         code: 股票代码（支持多种格式）
         start_date: 开始日期 "YYYY-MM-DD"
         end_date: 结束日期 "YYYY-MM-DD"
+        use_realtime: 是否尝试获取实时价格（盘中交易时间）
     
     Returns:
         pd.DataFrame 或 None（失败时）
@@ -85,7 +212,18 @@ def fetch_stock_data_yfinance(code: str, start_date: str, end_date: str) -> Opti
         return None
     
     try:
-        print(f"[市场数据] [yfinance] 尝试获取数据: code={code}")
+        print(f"[市场数据] [yfinance] 尝试获取数据: code={code}, start_date={start_date}, end_date={end_date}, use_realtime={use_realtime}")
+        
+        # 如果是盘中且需要实时数据，且查询的是今天的数据
+        beijing_time = get_beijing_time()
+        today_str = beijing_time.strftime('%Y-%m-%d')
+        
+        if use_realtime and is_trading_hours() and end_date >= today_str:
+            print(f"[市场数据] [yfinance] 盘中交易时间，尝试获取实时价格")
+            realtime_df = fetch_realtime_price_yfinance(code)
+            if realtime_df is not None and not realtime_df.empty:
+                print(f"[市场数据] [yfinance] 成功获取实时价格数据")
+                return realtime_df
         
         # 转换为 yfinance 格式
         symbol = convert_to_yfinance_symbol(code)
@@ -192,8 +330,16 @@ def fetch_stock_data_baostock(code: str, start_date: str, end_date: str) -> Opti
         
         try:
             # 转换日期格式（baostock 需要 YYYYMMDD）
-            start_dt = start_date.replace("-", "")
-            end_dt = end_date.replace("-", "")
+            # 确保日期格式正确：如果是 date 对象，使用 strftime；如果是字符串，直接处理
+            if isinstance(start_date, date):
+                start_dt = start_date.strftime('%Y%m%d')
+            else:
+                start_dt = str(start_date).replace("-", "")
+            
+            if isinstance(end_date, date):
+                end_dt = end_date.strftime('%Y%m%d')
+            else:
+                end_dt = str(end_date).replace("-", "")
             
             # 获取数据（添加异常捕获，防止网络错误导致崩溃）
             try:
@@ -220,6 +366,13 @@ def fetch_stock_data_baostock(code: str, start_date: str, end_date: str) -> Opti
             # 检查 rs 是否为 None
             if rs is None:
                 print(f"[市场数据] [baostock] 查询返回 None，可能网络错误或服务异常")
+                beijing_time = get_beijing_time()
+                today_str = beijing_time.strftime('%Y-%m-%d')
+                # 检查是否是查询今天的数据
+                end_date_clean = str(end_date).replace("-", "") if isinstance(end_date, str) else end_date.strftime('%Y%m%d')
+                today_clean = today_str.replace("-", "")
+                if end_date_clean == today_clean:
+                    print(f"[市场数据] [baostock] 当前时间点 Baostock 暂无收盘数据，尝试回退或保留实时价")
                 return None
             
             if rs.error_code != '0':
@@ -298,6 +451,86 @@ def fetch_stock_data_baostock(code: str, start_date: str, end_date: str) -> Opti
         return None
 
 
+def fetch_stock_data_with_fallback(code: str, target_date: date, db: Session) -> Optional[pd.DataFrame]:
+    """
+    获取股票数据，带回退机制：如果今天的数据获取不到，回溯最近一个交易日
+    
+    Args:
+        code: 股票代码
+        target_date: 目标日期
+        db: 数据库会话
+    
+    Returns:
+        pd.DataFrame 或 None
+    """
+    beijing_time = get_beijing_time()
+    today = beijing_time.date()
+    target_date_str = target_date.strftime('%Y-%m-%d')
+    
+    # 判断是否在交易时间内
+    in_trading_hours = is_trading_hours()
+    
+    print(f"[市场数据] [回退机制] 尝试获取数据: code={code}, target_date={target_date_str}, 当前时间={'盘中' if in_trading_hours else '盘后'}")
+    
+    # 如果是今天且在交易时间内，尝试获取实时数据
+    if target_date == today and in_trading_hours:
+        print(f"[市场数据] [回退机制] 盘中交易时间，优先获取实时价格")
+        # 尝试 yfinance 实时价格
+        df = fetch_stock_data_yfinance(code, target_date_str, target_date_str, use_realtime=True)
+        if df is not None and not df.empty:
+            print(f"[市场数据] [回退机制] 成功获取实时价格")
+            return df
+    
+    # 尝试获取目标日期的收盘数据
+    print(f"[市场数据] [回退机制] 尝试获取目标日期 {target_date_str} 的收盘数据")
+    df = fetch_stock_data(code, target_date_str, target_date_str)
+    if df is not None and not df.empty:
+        print(f"[市场数据] [回退机制] 成功获取目标日期数据")
+        return df
+    
+    # 如果目标日期是今天且获取失败，尝试回溯最近交易日
+    if target_date == today:
+        print(f"[市场数据] [回退机制] 今天的数据获取失败，开始回溯最近交易日...")
+        
+        # 从数据库中查找最近有数据的交易日
+        from database.models import Asset, MarketData
+        asset = db.query(Asset).filter(Asset.code.like(f"%{normalize_stock_code(code)}%")).first()
+        if asset:
+            latest_data = db.query(MarketData).filter(
+                MarketData.asset_id == asset.id,
+                MarketData.date < today
+            ).order_by(MarketData.date.desc()).first()
+            
+            if latest_data:
+                fallback_date = latest_data.date
+                print(f"[市场数据] [回退机制] 找到最近交易日: {fallback_date}")
+                fallback_date_str = fallback_date.strftime('%Y-%m-%d')
+                
+                # 尝试获取最近交易日的数据
+                df = fetch_stock_data(code, fallback_date_str, fallback_date_str)
+                if df is not None and not df.empty:
+                    # 将日期更新为今天，以便系统能识别
+                    df['date'] = target_date_str
+                    print(f"[市场数据] [回退机制] 使用最近交易日 {fallback_date} 的数据作为回退")
+                    return df
+        
+        # 如果数据库中没有数据，尝试回溯日期（最多回溯30天）
+        for days_back in range(1, 31):
+            fallback_date = today - timedelta(days=days_back)
+            fallback_date_str = fallback_date.strftime('%Y-%m-%d')
+            
+            print(f"[市场数据] [回退机制] 尝试回溯 {days_back} 天: {fallback_date_str}")
+            df = fetch_stock_data(code, fallback_date_str, fallback_date_str)
+            if df is not None and not df.empty:
+                # 将日期更新为今天
+                df['date'] = target_date_str
+                print(f"[市场数据] [回退机制] 使用 {fallback_date_str} 的数据作为回退")
+                return df
+    
+    print(f"[市场数据] [回退机制] 所有尝试都失败，无法获取数据")
+    return None
+
+
 def fetch_stock_data(code: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
     """
     获取A股股票数据（主数据源：yfinance，备份：baostock）
@@ -312,8 +545,20 @@ def fetch_stock_data(code: str, start_date: str, end_date: str) -> Optional[pd.D
     """
     print(f"[市场数据] 开始获取股票数据: code={code}, start_date={start_date}, end_date={end_date}")
     
-    # 1. 优先尝试 yfinance
-    df = fetch_stock_data_yfinance(code, start_date, end_date)
+    beijing_time = get_beijing_time()
+    today_str = beijing_time.strftime('%Y-%m-%d')
+    in_trading_hours = is_trading_hours()
+    
+    # 如果查询的是今天的数据且在交易时间内，尝试获取实时价格
+    if end_date >= today_str and in_trading_hours:
+        print(f"[市场数据] 盘中交易时间，尝试获取实时价格")
+        df = fetch_stock_data_yfinance(code, start_date, end_date, use_realtime=True)
+        if df is not None and not df.empty:
+            print(f"[市场数据] 使用 yfinance 实时价格成功获取数据")
+            return df
+    
+    # 1. 优先尝试 yfinance（收盘数据）
+    df = fetch_stock_data_yfinance(code, start_date, end_date, use_realtime=False)
     if df is not None and not df.empty:
         print(f"[市场数据] 使用 yfinance 成功获取数据")
         return df
@@ -467,7 +712,8 @@ def fetch_asset_data(
     code: str,
     asset_type: str,
     start_date: str,
-    end_date: str
+    end_date: str,
+    db: Optional[Session] = None
 ) -> List[Dict]:
     """
     获取资产数据（统一接口）
@@ -477,6 +723,7 @@ def fetch_asset_data(
         asset_type: 资产类型 (stock, fund, futures, forex)
         start_date: 开始日期 "YYYY-MM-DD"
         end_date: 结束日期 "YYYY-MM-DD"
+        db: 数据库会话（用于回退机制，可选）
     
     Returns:
         list of market data dicts（失败时返回空列表）
@@ -489,7 +736,15 @@ def fetch_asset_data(
     try:
         df = None
         try:
-            if asset_type == "stock":
+            beijing_time = get_beijing_time()
+            today = beijing_time.date()
+            end_date_obj = date.fromisoformat(end_date) if isinstance(end_date, str) else end_date
+            
+            # 如果查询的是今天的数据，且是股票类型，且有数据库会话，使用回退机制
+            if asset_type == "stock" and end_date_obj == today and db is not None:
+                print(f"[市场数据] 查询今天的数据，使用回退机制")
+                df = fetch_stock_data_with_fallback(code, today, db)
+            elif asset_type == "stock":
                 df = fetch_stock_data(code, start_date, end_date)
             elif asset_type == "fund":
                 df = fetch_fund_data(code, start_date, end_date)
@@ -693,7 +948,8 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
             code=asset.code,
             asset_type=asset.asset_type,
             start_date=BASELINE_DATE,
-            end_date=BASELINE_DATE
+            end_date=BASELINE_DATE,
+            db=db
         )
         if baseline_data_list:
             baseline_stored_count = store_market_data(asset_id, baseline_data_list, db)
@@ -709,7 +965,8 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
                 code=asset.code,
                 asset_type=asset.asset_type,
                 start_date=start_date,
-                end_date=end_date
+                end_date=end_date,
+                db=db
             )
         except TimeoutError as e:
             error_msg = f"获取数据超时: {str(e)}"
