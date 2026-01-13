@@ -91,9 +91,21 @@ def fetch_stock_data_yfinance(code: str, start_date: str, end_date: str) -> Opti
         symbol = convert_to_yfinance_symbol(code)
         print(f"[市场数据] [yfinance] 转换后的符号: {symbol}")
         
-        # 使用 yfinance 获取数据
-        ticker = yf.Ticker(symbol)
-        df = ticker.history(start=start_date, end=end_date)
+        # 使用 yfinance 获取数据（添加异常捕获，防止网络错误导致崩溃）
+        try:
+            ticker = yf.Ticker(symbol)
+            df = ticker.history(start=start_date, end=end_date)
+        except Exception as e:
+            error_type = type(e).__name__
+            error_msg = str(e)
+            # 检查是否是超时或网络相关错误
+            if 'timeout' in error_msg.lower() or 'timed out' in error_msg.lower():
+                print(f"[市场数据] [yfinance] 获取数据超时: {error_msg}")
+            elif 'connection' in error_msg.lower() or 'socket' in error_msg.lower():
+                print(f"[市场数据] [yfinance] 网络连接错误: {error_msg}")
+            else:
+                print(f"[市场数据] [yfinance] 获取数据时发生异常: {error_type}: {error_msg}")
+            return None
         
         if df is None or df.empty:
             print(f"[市场数据] [yfinance] 未获取到数据")
@@ -183,15 +195,32 @@ def fetch_stock_data_baostock(code: str, start_date: str, end_date: str) -> Opti
             start_dt = start_date.replace("-", "")
             end_dt = end_date.replace("-", "")
             
-            # 获取数据
-            rs = bs.query_history_k_data_plus(
-                bs_code,
-                "date,open,high,low,close,preclose,volume,amount,adjustflag,turn,pctChg,isST",
-                start_date=start_dt,
-                end_date=end_dt,
-                frequency="d",
-                adjustflag="3"  # 前复权
-            )
+            # 获取数据（添加异常捕获，防止网络错误导致崩溃）
+            try:
+                rs = bs.query_history_k_data_plus(
+                    bs_code,
+                    "date,open,high,low,close,preclose,volume,amount,adjustflag,turn,pctChg,isST",
+                    start_date=start_dt,
+                    end_date=end_dt,
+                    frequency="d",
+                    adjustflag="3"  # 前复权
+                )
+            except Exception as e:
+                error_type = type(e).__name__
+                error_msg = str(e)
+                # 检查是否是超时或网络相关错误
+                if 'timeout' in error_msg.lower() or 'timed out' in error_msg.lower():
+                    print(f"[市场数据] [baostock] 查询超时: {error_msg}")
+                elif 'connection' in error_msg.lower() or 'socket' in error_msg.lower():
+                    print(f"[市场数据] [baostock] 网络连接错误: {error_msg}")
+                else:
+                    print(f"[市场数据] [baostock] 查询时发生异常: {error_type}: {error_msg}")
+                return None
+            
+            # 检查 rs 是否为 None
+            if rs is None:
+                print(f"[市场数据] [baostock] 查询返回 None，可能网络错误或服务异常")
+                return None
             
             if rs.error_code != '0':
                 print(f"[市场数据] [baostock] 查询失败: {rs.error_msg}")
@@ -199,8 +228,14 @@ def fetch_stock_data_baostock(code: str, start_date: str, end_date: str) -> Opti
             
             # 转换为 DataFrame
             data_list = []
-            while (rs.error_code == '0') & rs.next():
-                data_list.append(rs.get_row_data())
+            try:
+                while (rs.error_code == '0') & rs.next():
+                    data_list.append(rs.get_row_data())
+            except Exception as e:
+                print(f"[市场数据] [baostock] 读取数据时发生异常: {type(e).__name__}: {str(e)}")
+                # 如果已经有部分数据，继续处理
+                if not data_list:
+                    return None
             
             if not data_list:
                 print(f"[市场数据] [baostock] 未获取到数据")
@@ -453,12 +488,20 @@ def fetch_asset_data(
     
     try:
         df = None
-        if asset_type == "stock":
-            df = fetch_stock_data(code, start_date, end_date)
-        elif asset_type == "fund":
-            df = fetch_fund_data(code, start_date, end_date)
-        else:
-            print(f"[市场数据] 错误: 不支持的资产类型: {asset_type}")
+        try:
+            if asset_type == "stock":
+                df = fetch_stock_data(code, start_date, end_date)
+            elif asset_type == "fund":
+                df = fetch_fund_data(code, start_date, end_date)
+            else:
+                print(f"[市场数据] 错误: 不支持的资产类型: {asset_type}")
+                return []
+        except TimeoutError as e:
+            print(f"[市场数据] 错误: 获取资产数据超时: {str(e)}")
+            return []
+        except Exception as e:
+            print(f"[市场数据] 错误: 获取资产数据时发生异常: {type(e).__name__}: {str(e)}")
+            traceback.print_exc()
             return []
         
         if df is None or df.empty:
@@ -466,12 +509,16 @@ def fetch_asset_data(
             return []
         
         print(f"[市场数据] 开始解析市场数据...")
-        result = parse_market_data(df, asset_type, code)
-        print(f"[市场数据] ===== 成功解析 {len(result)} 条数据 =====")
-        
-        return result
+        try:
+            result = parse_market_data(df, asset_type, code)
+            print(f"[市场数据] ===== 成功解析 {len(result)} 条数据 =====")
+            return result
+        except Exception as e:
+            print(f"[市场数据] 错误: 解析市场数据时发生异常: {type(e).__name__}: {str(e)}")
+            traceback.print_exc()
+            return []
     except Exception as e:
-        print(f"[市场数据] 错误: 获取资产数据时发生异常: {type(e).__name__}: {str(e)}")
+        print(f"[市场数据] 错误: 获取资产数据时发生未预期的异常: {type(e).__name__}: {str(e)}")
         traceback.print_exc()
         return []
 
@@ -581,9 +628,14 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
     
     # 确定更新日期范围
     start_date = asset.start_date.isoformat() if asset.start_date else "2026-01-05"
-    end_date = asset.end_date.isoformat() if asset.end_date else "2026-12-31"
+    # 确保 end_date 不超过今天
+    today = date.today()
+    if asset.end_date:
+        end_date = min(asset.end_date, today).isoformat()
+    else:
+        end_date = today.isoformat()
     
-    print(f"[市场数据] 资产配置的日期范围: {start_date} 至 {end_date}")
+    print(f"[市场数据] 资产配置的日期范围: {start_date} 至 {end_date} (今天: {today.isoformat()})")
     
     # 检查基准日期数据是否存在
     baseline_date_obj = date.fromisoformat(BASELINE_DATE) if isinstance(BASELINE_DATE, str) else BASELINE_DATE
@@ -606,12 +658,32 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
         
         if latest_data:
             # 从最新数据日期之后开始更新
-            start_date = (latest_data.date + timedelta(days=1)).isoformat()
+            next_date = latest_data.date + timedelta(days=1)
+            # 确保开始日期不超过今天
+            start_date = min(next_date, today).isoformat()
             print(f"[市场数据] 检测到已有最新数据日期: {latest_data.date}, 将从 {start_date} 开始更新")
         else:
             print(f"[市场数据] 未检测到已有数据，将从配置的开始日期更新")
     else:
         print(f"[市场数据] 强制更新模式，将更新整个日期范围")
+    
+    # 最终检查：确保 start_date 不超过 end_date，且都不超过今天
+    start_date_obj = date.fromisoformat(start_date)
+    end_date_obj = date.fromisoformat(end_date)
+    
+    if start_date_obj > today:
+        print(f"[市场数据] 警告: 开始日期 {start_date} 超过今天，调整为今天")
+        start_date = today.isoformat()
+        start_date_obj = today
+    
+    if end_date_obj > today:
+        print(f"[市场数据] 警告: 结束日期 {end_date} 超过今天，调整为今天")
+        end_date = today.isoformat()
+        end_date_obj = today
+    
+    if start_date_obj > end_date_obj:
+        print(f"[市场数据] 警告: 开始日期 {start_date} 大于结束日期 {end_date}，无需更新")
+        return {"success": False, "message": "开始日期大于结束日期，无需更新", "stored_count": 0}
     
     # 如果需要补全基准数据，先获取基准日期的数据
     baseline_stored_count = 0
@@ -631,13 +703,23 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
     
     try:
         print(f"[市场数据] 调用 fetch_asset_data 获取数据...")
-        # 获取数据
-        market_data_list = fetch_asset_data(
-            code=asset.code,
-            asset_type=asset.asset_type,
-            start_date=start_date,
-            end_date=end_date
-        )
+        # 获取数据（添加异常捕获，防止单个资产失败导致整个流程崩溃）
+        try:
+            market_data_list = fetch_asset_data(
+                code=asset.code,
+                asset_type=asset.asset_type,
+                start_date=start_date,
+                end_date=end_date
+            )
+        except TimeoutError as e:
+            error_msg = f"获取数据超时: {str(e)}"
+            print(f"[市场数据] 错误: {error_msg}")
+            return {"success": False, "message": error_msg, "stored_count": 0}
+        except Exception as e:
+            error_msg = f"获取数据时发生异常: {type(e).__name__}: {str(e)}"
+            print(f"[市场数据] 错误: {error_msg}")
+            traceback.print_exc()
+            return {"success": False, "message": error_msg, "stored_count": 0}
         
         print(f"[市场数据] fetch_asset_data 返回 {len(market_data_list) if market_data_list else 0} 条数据")
         
@@ -646,9 +728,16 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
             return {"success": False, "message": "未获取到数据", "stored_count": 0}
         
         print(f"[市场数据] 开始存储数据到数据库...")
-        # 存储数据
-        stored_count = store_market_data(asset_id, market_data_list, db)
-        print(f"[市场数据] 成功存储 {stored_count} 条数据（包含基准日期 {baseline_stored_count} 条）")
+        # 存储数据（添加异常捕获）
+        try:
+            stored_count = store_market_data(asset_id, market_data_list, db)
+            print(f"[市场数据] 成功存储 {stored_count} 条数据（包含基准日期 {baseline_stored_count} 条）")
+        except Exception as e:
+            error_msg = f"存储数据时发生异常: {type(e).__name__}: {str(e)}"
+            print(f"[市场数据] 错误: {error_msg}")
+            traceback.print_exc()
+            db.rollback()
+            return {"success": False, "message": error_msg, "stored_count": 0}
         
         total_stored = stored_count + baseline_stored_count
         print(f"[市场数据] ========== 资产数据更新完成 (asset_id={asset_id}) ==========")
