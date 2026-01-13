@@ -1386,96 +1386,96 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
             ).first()
             
             if existing_record:
-            # 检查数据是否完整
-            has_price = existing_record.close_price is not None
-            has_metrics = (
-                (existing_record.pe_ratio is not None and existing_record.pe_ratio != 0) or
-                (existing_record.pb_ratio is not None and existing_record.pb_ratio != 0) or
-                (existing_record.market_cap is not None and existing_record.market_cap > 0)
-            )
-            
-            if has_price and has_metrics:
-                # 数据完整，跳过
-                skipped_count += 1
-                if skipped_count % 10 == 0:
-                    print(f"[市场数据] 已跳过 {skipped_count} 条完整记录...")
-            elif has_price and not has_metrics:
-                # 有价格但缺少财务指标，需要补全
-                if ref_pe and ref_price and ref_price > 0:
-                    hist_price = existing_record.close_price
-                    price_ratio = hist_price / ref_price
-                    
-                    # 根据股价波动比例反推历史指标
-                    existing_record.pe_ratio = ref_pe * price_ratio
-                    if ref_pb:
-                        existing_record.pb_ratio = ref_pb * price_ratio
-                    if ref_market_cap:
-                        existing_record.market_cap = ref_market_cap * price_ratio
-                    if ref_eps:
-                        existing_record.eps_forecast = ref_eps  # EPS 保持不变
-                    
-                    filled_metrics_count += 1
-                    pe_str = f"{existing_record.pe_ratio:.2f}" if existing_record.pe_ratio is not None else "N/A"
-                    pb_str = f"{existing_record.pb_ratio:.2f}" if existing_record.pb_ratio is not None else "N/A"
-                    market_cap_str = f"{existing_record.market_cap:.2f}" if existing_record.market_cap is not None else "N/A"
-                    print(f"[市场数据] 补全财务指标 (日期: {current_date}): PE={pe_str}, PB={pb_str}, 市值={market_cap_str}")
-                else:
-                    print(f"[市场数据] 警告: 日期 {current_date} 缺少财务指标，但无基准数据可反推")
-        else:
-            # 记录不存在，需要获取历史价格并补全财务指标
-            try:
-                # 获取该日期的历史价格
-                hist_data_list = fetch_asset_data(
-                    code=asset.code,
-                    asset_type=asset.asset_type,
-                    start_date=current_date.isoformat(),
-                    end_date=current_date.isoformat(),
-                    db=db
+                # 检查数据是否完整
+                has_price = existing_record.close_price is not None
+                has_metrics = (
+                    (existing_record.pe_ratio is not None and existing_record.pe_ratio != 0) or
+                    (existing_record.pb_ratio is not None and existing_record.pb_ratio != 0) or
+                    (existing_record.market_cap is not None and existing_record.market_cap > 0)
                 )
                 
-                if hist_data_list and len(hist_data_list) > 0:
-                    hist_data = hist_data_list[0]
-                    hist_price = hist_data.get("close_price")
-                    
-                    if hist_price:
-                        # 创建新记录
-                        market_data = MarketData(
-                            asset_id=asset_id,
-                            date=current_date,
-                            close_price=hist_price,
-                            volume=hist_data.get("volume"),
-                            turnover_rate=hist_data.get("turnover_rate"),
-                            pe_ratio=None,
-                            pb_ratio=None,
-                            market_cap=None,
-                            eps_forecast=None,
-                            additional_data=json.dumps(hist_data.get("additional_data", {}), ensure_ascii=False) if hist_data.get("additional_data") else None
-                        )
+                if has_price and has_metrics:
+                    # 数据完整，跳过
+                    skipped_count += 1
+                    if skipped_count % 10 == 0:
+                        print(f"[市场数据] 已跳过 {skipped_count} 条完整记录...")
+                elif has_price and not has_metrics:
+                    # 有价格但缺少财务指标，需要补全
+                    if ref_pe and ref_price and ref_price > 0:
+                        hist_price = existing_record.close_price
+                        price_ratio = hist_price / ref_price
                         
-                        # 如果有基准财务指标，按比例反推
-                        if ref_pe and ref_price and ref_price > 0:
-                            price_ratio = hist_price / ref_price
-                            market_data.pe_ratio = ref_pe * price_ratio
-                            if ref_pb:
-                                market_data.pb_ratio = ref_pb * price_ratio
-                            if ref_market_cap:
-                                market_data.market_cap = ref_market_cap * price_ratio
-                            if ref_eps:
-                                market_data.eps_forecast = ref_eps
-                            
-                            pe_str = f"{market_data.pe_ratio:.2f}" if market_data.pe_ratio is not None else "N/A"
-                            print(f"[市场数据] 新增记录并补全指标 (日期: {current_date}): 价格={hist_price}, PE={pe_str}")
-                        else:
-                            print(f"[市场数据] 新增记录 (日期: {current_date}): 价格={hist_price} (无基准指标)")
+                        # 根据股价波动比例反推历史指标
+                        existing_record.pe_ratio = ref_pe * price_ratio
+                        if ref_pb:
+                            existing_record.pb_ratio = ref_pb * price_ratio
+                        if ref_market_cap:
+                            existing_record.market_cap = ref_market_cap * price_ratio
+                        if ref_eps:
+                            existing_record.eps_forecast = ref_eps  # EPS 保持不变
                         
-                        db.add(market_data)
-                        new_data_count += 1
+                        filled_metrics_count += 1
+                        pe_str = f"{existing_record.pe_ratio:.2f}" if existing_record.pe_ratio is not None else "N/A"
+                        pb_str = f"{existing_record.pb_ratio:.2f}" if existing_record.pb_ratio is not None else "N/A"
+                        market_cap_str = f"{existing_record.market_cap:.2f}" if existing_record.market_cap is not None else "N/A"
+                        print(f"[市场数据] 补全财务指标 (日期: {current_date}): PE={pe_str}, PB={pb_str}, 市值={market_cap_str}")
                     else:
-                        print(f"[市场数据] 警告: 日期 {current_date} 无法获取价格数据")
-                else:
-                    print(f"[市场数据] 警告: 日期 {current_date} 无法获取数据")
-            except Exception as e:
-                print(f"[市场数据] 警告: 获取日期 {current_date} 的数据时发生异常: {str(e)}")
+                        print(f"[市场数据] 警告: 日期 {current_date} 缺少财务指标，但无基准数据可反推")
+            else:
+                # 记录不存在，需要获取历史价格并补全财务指标
+                try:
+                    # 获取该日期的历史价格
+                    hist_data_list = fetch_asset_data(
+                        code=asset.code,
+                        asset_type=asset.asset_type,
+                        start_date=current_date.isoformat(),
+                        end_date=current_date.isoformat(),
+                        db=db
+                    )
+                    
+                    if hist_data_list and len(hist_data_list) > 0:
+                        hist_data = hist_data_list[0]
+                        hist_price = hist_data.get("close_price")
+                        
+                        if hist_price:
+                            # 创建新记录
+                            market_data = MarketData(
+                                asset_id=asset_id,
+                                date=current_date,
+                                close_price=hist_price,
+                                volume=hist_data.get("volume"),
+                                turnover_rate=hist_data.get("turnover_rate"),
+                                pe_ratio=None,
+                                pb_ratio=None,
+                                market_cap=None,
+                                eps_forecast=None,
+                                additional_data=json.dumps(hist_data.get("additional_data", {}), ensure_ascii=False) if hist_data.get("additional_data") else None
+                            )
+                            
+                            # 如果有基准财务指标，按比例反推
+                            if ref_pe and ref_price and ref_price > 0:
+                                price_ratio = hist_price / ref_price
+                                market_data.pe_ratio = ref_pe * price_ratio
+                                if ref_pb:
+                                    market_data.pb_ratio = ref_pb * price_ratio
+                                if ref_market_cap:
+                                    market_data.market_cap = ref_market_cap * price_ratio
+                                if ref_eps:
+                                    market_data.eps_forecast = ref_eps
+                                
+                                pe_str = f"{market_data.pe_ratio:.2f}" if market_data.pe_ratio is not None else "N/A"
+                                print(f"[市场数据] 新增记录并补全指标 (日期: {current_date}): 价格={hist_price}, PE={pe_str}")
+                            else:
+                                print(f"[市场数据] 新增记录 (日期: {current_date}): 价格={hist_price} (无基准指标)")
+                            
+                            db.add(market_data)
+                            new_data_count += 1
+                        else:
+                            print(f"[市场数据] 警告: 日期 {current_date} 无法获取价格数据")
+                    else:
+                        print(f"[市场数据] 警告: 日期 {current_date} 无法获取数据")
+                except Exception as e:
+                    print(f"[市场数据] 警告: 获取日期 {current_date} 的数据时发生异常: {str(e)}")
         except Exception as e:
             # 单个日期处理失败不应该导致整个资产更新失败
             print(f"[市场数据] 警告: 处理日期 {current_date} 时发生异常: {type(e).__name__}: {str(e)}")
