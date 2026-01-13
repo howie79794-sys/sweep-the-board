@@ -155,13 +155,54 @@ export function AllAssetsChart({
     "#ff8042",
   ]
 
+  // 计算对数坐标的 domain（仅在显示收盘价时使用）
+  const getLogDomain = () => {
+    if (showChangeRate) return undefined
+    
+    // 从图表数据中找出最小和最大价格
+    let minPrice = Infinity
+    let maxPrice = -Infinity
+    
+    chartData.forEach((point) => {
+      assets.forEach((asset) => {
+        const price = point[asset.code]
+        if (typeof price === 'number' && price > 0) {
+          minPrice = Math.min(minPrice, price)
+          maxPrice = Math.max(maxPrice, price)
+        }
+      })
+    })
+    
+    // 如果没有有效数据，使用默认范围
+    if (minPrice === Infinity || maxPrice === -Infinity) {
+      return [0.1, 200]
+    }
+    
+    // 设置合适的 domain，确保最小值至少为 0.1，最大值向上取整
+    const minDomain = Math.max(0.1, Math.floor(minPrice * 0.9 * 10) / 10)
+    const maxDomain = Math.ceil(maxPrice * 1.1)
+    
+    return [minDomain, maxDomain]
+  }
+
+  // 对数坐标的刻度格式化函数
+  const formatLogTick = (value: number) => {
+    if (value < 1) {
+      return value.toFixed(1)
+    } else if (value < 10) {
+      return value.toFixed(1)
+    } else {
+      return Math.round(value).toString()
+    }
+  }
+
   return (
     <div className={cn("w-full", className)}>
       <div className="mb-4">
         <h3 className="text-lg font-semibold">
           {showChangeRate
             ? "累计收益率趋势追踪图 (自基准日以来)"
-            : "收盘价走势图"}
+            : "股价对数趋势分析图 (Log-Scale)"}
         </h3>
       </div>
       <div className="w-full h-[400px]">
@@ -170,6 +211,9 @@ export function AllAssetsChart({
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="date" />
             <YAxis
+              scale={showChangeRate ? "linear" : "log"}
+              domain={showChangeRate ? undefined : getLogDomain()}
+              tickFormatter={showChangeRate ? undefined : formatLogTick}
               label={{
                 value: showChangeRate ? "累计收益率 (%)" : "收盘价 (元)",
                 angle: -90,
