@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
 from pathlib import Path
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import uuid
 import json
 import traceback
@@ -661,9 +661,53 @@ async def get_all_assets_chart_data(
             if baseline_data:
                 baseline_price = baseline_data.close_price
         
-        # 构建数据点
+        # 构建数据点，并填充周末数据（使用前一个交易日的值）
         data_points = []
-        for md in market_data_list:
+        last_valid_data = None  # 用于存储最近一个有效交易日的数据
+        
+        # 生成日期范围内的所有日期（包括周末）
+        current_date = start_date_obj
+        while current_date <= end_date_obj:
+            # 查找该日期是否有市场数据
+            md = next((m for m in market_data_list if m.date == current_date), None)
+            
+            if md:
+                # 有数据，使用实际数据
+                last_valid_data = {
+                    "close_price": md.close_price,
+                    "pe_ratio": md.pe_ratio if md.pe_ratio is not None else 0.0,
+                    "pb_ratio": md.pb_ratio if md.pb_ratio is not None else 0.0,
+                    "market_cap": md.market_cap if md.market_cap is not None else 0.0,
+                    "eps_forecast": md.eps_forecast if md.eps_forecast is not None else 0.0,
+                }
+            elif last_valid_data:
+                # 无数据但之前有有效数据（可能是周末），使用前一个交易日的值
+                # 直接构建数据点，使用前一个交易日的值
+                data_point = {
+                    "date": current_date.isoformat(),
+                    "close_price": last_valid_data["close_price"],
+                    "pe_ratio": last_valid_data["pe_ratio"],
+                    "pb_ratio": last_valid_data["pb_ratio"],
+                    "market_cap": last_valid_data["market_cap"],
+                    "eps_forecast": last_valid_data["eps_forecast"],
+                }
+                
+                # 计算收益率（相对于基准价格）
+                if baseline_price and baseline_price > 0:
+                    change_rate = ((last_valid_data["close_price"] - baseline_price) / baseline_price) * 100
+                    data_point["change_rate"] = change_rate
+                else:
+                    data_point["change_rate"] = None
+                
+                data_points.append(data_point)
+                current_date += timedelta(days=1)
+                continue
+            else:
+                # 无数据且之前也没有有效数据，跳过该日期
+                current_date += timedelta(days=1)
+                continue
+            
+            # 构建数据点（有实际数据的情况）
             data_point = {
                 "date": md.date.isoformat(),
                 "close_price": md.close_price,
@@ -687,6 +731,9 @@ async def get_all_assets_chart_data(
                 print(f"[API] 图表数据点财务指标 (资产: {asset.code}): PE={md.pe_ratio}, PB={md.pb_ratio}, 市值={md.market_cap}, EPS={md.eps_forecast}")
             
             data_points.append(data_point)
+            
+            # 移动到下一天
+            current_date += timedelta(days=1)
         
         if data_points:  # 只有当有数据点时才添加到结果中
             result.append({

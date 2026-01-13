@@ -1378,6 +1378,11 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
     # 遍历日期范围内的每一天
     current_date = baseline_date_obj
     while current_date <= today:
+        # 跳过周末（非交易日）
+        if current_date.weekday() >= 5:  # 5=Saturday, 6=Sunday
+            current_date += timedelta(days=1)
+            continue
+        
         try:
             # 检查该日期是否已存在记录
             existing_record = db.query(MarketData).filter(
@@ -1471,11 +1476,14 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
                             db.add(market_data)
                             new_data_count += 1
                         else:
-                            print(f"[市场数据] 警告: 日期 {current_date} 无法获取价格数据")
+                            # 静默跳过：该日期无交易数据
+                            pass
                     else:
-                        print(f"[市场数据] 警告: 日期 {current_date} 无法获取数据")
+                        # 静默跳过：数据源返回空，可能是非交易日
+                        pass
                 except Exception as e:
-                    print(f"[市场数据] 警告: 获取日期 {current_date} 的数据时发生异常: {str(e)}")
+                    # 静默处理异常，只记录日志，不抛出
+                    print(f"[市场数据] [跳过] 日期 {current_date} 无交易数据: {type(e).__name__}")
         except Exception as e:
             # 单个日期处理失败不应该导致整个资产更新失败
             print(f"[市场数据] 警告: 处理日期 {current_date} 时发生异常: {type(e).__name__}: {str(e)}")

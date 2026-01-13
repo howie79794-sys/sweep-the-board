@@ -69,17 +69,30 @@ export function PERatioChart({
 
       // 将所有资产的数据合并到同一个日期轴上
       const dateMap = new Map<string, Record<string, string | number | null>>()
+      // 存储每个资产代码的最近有效值，用于兜底
+      const lastValidValues = new Map<string, Map<string, number>>()
 
       data.forEach((asset: AssetChartData) => {
+        if (!lastValidValues.has(asset.code)) {
+          lastValidValues.set(asset.code, new Map())
+        }
+        const assetLastValues = lastValidValues.get(asset.code)!
+
         asset.data.forEach((point: DataPoint) => {
           const date = point.date
           if (!dateMap.has(date)) {
-            dateMap.set(date, { date })
+            dateMap.set(date, { date, originalDate: date })
           }
           const dateData = dateMap.get(date)!
 
           // 显示 PE 比率
-          dateData[asset.code] = point.pe_ratio ?? null
+          const peValue = point.pe_ratio ?? null
+          dateData[asset.code] = peValue
+          
+          // 更新最近有效值（用于兜底）
+          if (peValue !== null && peValue !== undefined && peValue !== 0) {
+            assetLastValues.set('pe_ratio', peValue as number)
+          }
         })
       })
 
@@ -92,11 +105,13 @@ export function PERatioChart({
         }
       )
 
-      // 格式化日期
+      // 格式化日期，保留原始日期用于 Tooltip 兜底逻辑
       const formattedData = chartDataArray.map((item: Record<string, string | number | null>) => {
         const dateStr = typeof item.date === 'string' ? item.date : ''
+        const originalDate = item.originalDate || dateStr
         return {
           ...item,
+          originalDate: originalDate, // 保留原始日期
           date: new Date(dateStr).toLocaleDateString("zh-CN", {
             month: "short",
             day: "numeric",
@@ -170,14 +185,56 @@ export function PERatioChart({
               }}
             />
             <Tooltip
-              formatter={(value: any, name: string) => {
+              formatter={(value: any, name: string, props: any) => {
                 // 处理 null 或 undefined
-                if (value === null || value === undefined) return "N/A"
+                if (value === null || value === undefined) {
+                  // 尝试查找最近的有效值
+                  const asset = assets.find(a => a.code === name)
+                  if (asset) {
+                    // 在当前数据点之前查找最近的有效值
+                    const currentDate = props.payload?.originalDate || props.payload?.date
+                    if (currentDate) {
+                      const currentDateObj = new Date(currentDate)
+                      // 向前查找最近的有效值
+                      for (let i = chartData.length - 1; i >= 0; i--) {
+                        const point = chartData[i]
+                        const pointDate = new Date(point.originalDate || point.date)
+                        if (pointDate < currentDateObj && point[name] !== null && point[name] !== undefined && point[name] !== 0) {
+                          return `${formatNumber(point[name] as number)} (最近有效值)`
+                        }
+                      }
+                    }
+                  }
+                  return "非交易日"
+                }
                 // 转换为数字
                 const numValue = typeof value === 'number' ? value : parseFloat(String(value))
                 // 处理 NaN
                 if (isNaN(numValue)) return "N/A"
-                // 即使是 0 也显示，因为 0 可能是真实值
+                // 检查是否为 0（可能是非交易日填充的值）
+                if (numValue === 0) {
+                  // 检查是否是周末
+                  const currentDate = props.payload?.originalDate || props.payload?.date
+                  if (currentDate) {
+                    const dateObj = new Date(currentDate)
+                    const weekday = dateObj.getDay()
+                    if (weekday === 0 || weekday === 6) {
+                      // 周末，尝试查找最近的有效值
+                      const asset = assets.find(a => a.code === name)
+                      if (asset) {
+                        for (let i = chartData.length - 1; i >= 0; i--) {
+                          const point = chartData[i]
+                          const pointDate = new Date(point.originalDate || point.date)
+                          if (pointDate < dateObj && point[name] !== null && point[name] !== undefined && point[name] !== 0) {
+                            return `${formatNumber(point[name] as number)} (最近有效值)`
+                          }
+                        }
+                      }
+                      return "非交易日"
+                    }
+                  }
+                }
+                // 正常显示数值
                 return formatNumber(numValue)
               }}
             />
