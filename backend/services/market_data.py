@@ -555,65 +555,65 @@ def fetch_stock_data_with_fallback(code: str, target_date: date, db: Session) ->
         
         # 如果目标日期是今天且获取失败，尝试回溯最近交易日
         if target_date == today:
-        print(f"[市场数据] [回退机制] 今天的数据获取失败，开始回溯最近交易日...")
-        
-        # 从数据库中查找最近有数据的交易日
-        from database.models import Asset, MarketData
-        try:
-            asset = db.query(Asset).filter(Asset.code.like(f"%{normalize_stock_code(code)}%")).first()
-            if asset:
-                latest_data = db.query(MarketData).filter(
-                    MarketData.asset_id == asset.id,
-                    MarketData.date < today
-                ).order_by(MarketData.date.desc()).first()
-                
-                if latest_data:
-                    fallback_date = latest_data.date
-                    print(f"[市场数据] [回退机制] 找到最近交易日: {fallback_date}")
-                    
-                    # 直接使用数据库中的数据，而不是再次调用外部 API
-                    # 构造 DataFrame 从数据库数据
-                    data = {
-                        'date': [target_date_str],  # 使用目标日期（今天）
-                        'open': [latest_data.close_price],  # 使用收盘价作为开盘价
-                        'close': [latest_data.close_price],
-                        'high': [latest_data.close_price],
-                        'low': [latest_data.close_price],
-                        'volume': [latest_data.volume] if latest_data.volume else [None],
-                        'turnover': [None],
-                        'amplitude': [None],
-                        'change_pct': [None],
-                        'change_amount': [None],
-                        'turnover_rate': [latest_data.turnover_rate] if latest_data.turnover_rate else [None]
-                    }
-                    
-                    df = pd.DataFrame(data)
-                    print(f"[市场数据] [回退机制] 使用数据库中的最近交易日 {fallback_date} 的数据作为回退")
-                    return df
-        except Exception as e:
-            print(f"[市场数据] [回退机制] 查询数据库时发生异常: {type(e).__name__}: {str(e)}")
-            traceback.print_exc()
-        
-        # 如果数据库中没有数据，尝试回溯日期（最多回溯30天）
-        print(f"[市场数据] [回退机制] 数据库中没有找到数据，尝试从外部API回溯...")
-        for days_back in range(1, 31):
-            fallback_date = today - timedelta(days=days_back)
-            fallback_date_str = fallback_date.strftime('%Y-%m-%d')
+            print(f"[市场数据] [回退机制] 今天的数据获取失败，开始回溯最近交易日...")
             
-            print(f"[市场数据] [回退机制] 尝试回溯 {days_back} 天: {fallback_date_str}")
+            # 从数据库中查找最近有数据的交易日
+            from database.models import Asset, MarketData
             try:
-                df = fetch_stock_data(code, fallback_date_str, fallback_date_str)
-                if df is not None and not df.empty:
-                    # 将日期更新为今天
-                    df['date'] = target_date_str
-                    print(f"[市场数据] [回退机制] 使用 {fallback_date_str} 的数据作为回退")
-                    return df
+                asset = db.query(Asset).filter(Asset.code.like(f"%{normalize_stock_code(code)}%")).first()
+                if asset:
+                    latest_data = db.query(MarketData).filter(
+                        MarketData.asset_id == asset.id,
+                        MarketData.date < today
+                    ).order_by(MarketData.date.desc()).first()
+                    
+                    if latest_data:
+                        fallback_date = latest_data.date
+                        print(f"[市场数据] [回退机制] 找到最近交易日: {fallback_date}")
+                        
+                        # 直接使用数据库中的数据，而不是再次调用外部 API
+                        # 构造 DataFrame 从数据库数据
+                        data = {
+                            'date': [target_date_str],  # 使用目标日期（今天）
+                            'open': [latest_data.close_price],  # 使用收盘价作为开盘价
+                            'close': [latest_data.close_price],
+                            'high': [latest_data.close_price],
+                            'low': [latest_data.close_price],
+                            'volume': [latest_data.volume] if latest_data.volume else [None],
+                            'turnover': [None],
+                            'amplitude': [None],
+                            'change_pct': [None],
+                            'change_amount': [None],
+                            'turnover_rate': [latest_data.turnover_rate] if latest_data.turnover_rate else [None]
+                        }
+                        
+                        df = pd.DataFrame(data)
+                        print(f"[市场数据] [回退机制] 使用数据库中的最近交易日 {fallback_date} 的数据作为回退")
+                        return df
             except Exception as e:
-                print(f"[市场数据] [回退机制] 回溯 {fallback_date_str} 时发生异常: {type(e).__name__}: {str(e)}")
-                continue
-    
-        print(f"[市场数据] [回退机制] 所有尝试都失败，无法获取数据")
-        return None
+                print(f"[市场数据] [回退机制] 查询数据库时发生异常: {type(e).__name__}: {str(e)}")
+                traceback.print_exc()
+            
+            # 如果数据库中没有数据，尝试回溯日期（最多回溯30天）
+            print(f"[市场数据] [回退机制] 数据库中没有找到数据，尝试从外部API回溯...")
+            for days_back in range(1, 31):
+                fallback_date = today - timedelta(days=days_back)
+                fallback_date_str = fallback_date.strftime('%Y-%m-%d')
+                
+                print(f"[市场数据] [回退机制] 尝试回溯 {days_back} 天: {fallback_date_str}")
+                try:
+                    df = fetch_stock_data(code, fallback_date_str, fallback_date_str)
+                    if df is not None and not df.empty:
+                        # 将日期更新为今天
+                        df['date'] = target_date_str
+                        print(f"[市场数据] [回退机制] 使用 {fallback_date_str} 的数据作为回退")
+                        return df
+                except Exception as e:
+                    print(f"[市场数据] [回退机制] 回溯 {fallback_date_str} 时发生异常: {type(e).__name__}: {str(e)}")
+                    continue
+            
+            print(f"[市场数据] [回退机制] 所有尝试都失败，无法获取数据")
+            return None
     except Exception as e:
         print(f"[市场数据] [回退机制] 执行回退机制时发生未预期的异常: {type(e).__name__}: {str(e)}")
         traceback.print_exc()
