@@ -221,7 +221,7 @@ export function AllAssetsChart({
               }}
             />
             <Tooltip
-              formatter={(value: number | string, name: string) => {
+              formatter={(value: any, name: string) => {
                 const numValue = typeof value === 'number' ? value : parseFloat(String(value))
                 if (isNaN(numValue)) return value
                 if (showChangeRate) {

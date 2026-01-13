@@ -124,7 +124,7 @@ export function AssetChart({
             }}
           />
           <Tooltip
-            formatter={(value: number, name: string) => {
+            formatter={(value: any, name: string) => {
               if (name === "changeRate") {
                 return formatPercent(value)
               }
