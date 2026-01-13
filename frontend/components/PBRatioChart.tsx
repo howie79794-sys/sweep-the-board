@@ -171,10 +171,13 @@ export function PBRatioChart({
             />
             <Tooltip
               formatter={(value: any, name: string) => {
-                if (value === null || value === undefined) return "--"
+                // 处理 null 或 undefined
+                if (value === null || value === undefined) return "N/A"
+                // 转换为数字
                 const numValue = typeof value === 'number' ? value : parseFloat(String(value))
-                if (isNaN(numValue)) return "--"
-                if (numValue === 0) return "--"
+                // 处理 NaN
+                if (isNaN(numValue)) return "N/A"
+                // 即使是 0 也显示，因为 0 可能是真实值
                 return formatNumber(numValue)
               }}
             />

@@ -676,11 +676,11 @@ async def get_all_assets_chart_data(
             else:
                 data_point["change_rate"] = None
             
-            # 添加所有财务指标数据 - 显式赋值，确保字段存在
-            data_point["pe_ratio"] = md.pe_ratio if md.pe_ratio is not None else None
-            data_point["pb_ratio"] = md.pb_ratio if md.pb_ratio is not None else None
-            data_point["market_cap"] = md.market_cap if md.market_cap is not None else None
-            data_point["eps_forecast"] = md.eps_forecast if md.eps_forecast is not None else None
+            # 添加所有财务指标数据 - 确保返回数字 0 而不是 null，以便前端 Tooltip 能够正常捕获数值
+            data_point["pe_ratio"] = md.pe_ratio if md.pe_ratio is not None else 0.0
+            data_point["pb_ratio"] = md.pb_ratio if md.pb_ratio is not None else 0.0
+            data_point["market_cap"] = md.market_cap if md.market_cap is not None else 0.0
+            data_point["eps_forecast"] = md.eps_forecast if md.eps_forecast is not None else 0.0
             
             # 调试：打印第一条数据的财务指标
             if len(data_points) == 0:

@@ -247,7 +247,8 @@ def fetch_financial_indicators_yfinance(ticker: yf.Ticker) -> Dict[str, float]:
         if market_cap_value is not None and market_cap_value > 0:
             # 转换为亿元（除以 100,000,000）
             indicators["market_cap"] = market_cap_value / 100000000.0
-            print(f"[市场数据] [财务指标] 市值转换: 原始值={market_cap_value}, 转换后={indicators['market_cap']:.2f}亿元")
+            market_cap_str = f"{indicators['market_cap']:.2f}" if indicators['market_cap'] is not None else "N/A"
+            print(f"[市场数据] [财务指标] 市值转换: 原始值={market_cap_value}, 转换后={market_cap_str}亿元")
         else:
             print(f"[市场数据] [财务指标] 警告: 市值获取失败或为0 (marketCap={info.get('marketCap')}, market_cap={info.get('market_cap')})")
         
@@ -281,7 +282,11 @@ def fetch_financial_indicators_yfinance(ticker: yf.Ticker) -> Dict[str, float]:
             print(f"[市场数据] [财务指标] 警告: EPS获取失败，尝试的字段: earningsEstimateNextYear={info.get('earningsEstimateNextYear')}, trailingEps={info.get('trailingEps')}, forwardEps={info.get('forwardEps')}")
         
         # 打印获取结果（包括0值）
-        print(f"[市场数据] [财务指标] 获取结果: PE={indicators['pe_ratio']}, PB={indicators['pb_ratio']}, 市值={indicators['market_cap']:.2f}亿元, EPS预测={indicators['eps_forecast']}")
+        pe_str = str(indicators['pe_ratio']) if indicators['pe_ratio'] is not None else "N/A"
+        pb_str = str(indicators['pb_ratio']) if indicators['pb_ratio'] is not None else "N/A"
+        market_cap_str = f"{indicators['market_cap']:.2f}" if indicators['market_cap'] is not None else "N/A"
+        eps_str = str(indicators['eps_forecast']) if indicators['eps_forecast'] is not None else "N/A"
+        print(f"[市场数据] [财务指标] 获取结果: PE={pe_str}, PB={pb_str}, 市值={market_cap_str}亿元, EPS预测={eps_str}")
         
     except Exception as e:
         print(f"[市场数据] [财务指标] 获取失败: {type(e).__name__}: {str(e)}")
@@ -1373,13 +1378,14 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
     # 遍历日期范围内的每一天
     current_date = baseline_date_obj
     while current_date <= today:
-        # 检查该日期是否已存在记录
-        existing_record = db.query(MarketData).filter(
-            MarketData.asset_id == asset_id,
-            MarketData.date == current_date
-        ).first()
-        
-        if existing_record:
+        try:
+            # 检查该日期是否已存在记录
+            existing_record = db.query(MarketData).filter(
+                MarketData.asset_id == asset_id,
+                MarketData.date == current_date
+            ).first()
+            
+            if existing_record:
             # 检查数据是否完整
             has_price = existing_record.close_price is not None
             has_metrics = (
@@ -1409,7 +1415,10 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
                         existing_record.eps_forecast = ref_eps  # EPS 保持不变
                     
                     filled_metrics_count += 1
-                    print(f"[市场数据] 补全财务指标 (日期: {current_date}): PE={existing_record.pe_ratio:.2f}, PB={existing_record.pb_ratio:.2f if existing_record.pb_ratio else 'N/A'}, 市值={existing_record.market_cap:.2f if existing_record.market_cap else 'N/A'}")
+                    pe_str = f"{existing_record.pe_ratio:.2f}" if existing_record.pe_ratio is not None else "N/A"
+                    pb_str = f"{existing_record.pb_ratio:.2f}" if existing_record.pb_ratio is not None else "N/A"
+                    market_cap_str = f"{existing_record.market_cap:.2f}" if existing_record.market_cap is not None else "N/A"
+                    print(f"[市场数据] 补全财务指标 (日期: {current_date}): PE={pe_str}, PB={pb_str}, 市值={market_cap_str}")
                 else:
                     print(f"[市场数据] 警告: 日期 {current_date} 缺少财务指标，但无基准数据可反推")
         else:
@@ -1454,7 +1463,8 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
                             if ref_eps:
                                 market_data.eps_forecast = ref_eps
                             
-                            print(f"[市场数据] 新增记录并补全指标 (日期: {current_date}): 价格={hist_price}, PE={market_data.pe_ratio:.2f}")
+                            pe_str = f"{market_data.pe_ratio:.2f}" if market_data.pe_ratio is not None else "N/A"
+                            print(f"[市场数据] 新增记录并补全指标 (日期: {current_date}): 价格={hist_price}, PE={pe_str}")
                         else:
                             print(f"[市场数据] 新增记录 (日期: {current_date}): 价格={hist_price} (无基准指标)")
                         
@@ -1466,6 +1476,10 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
                     print(f"[市场数据] 警告: 日期 {current_date} 无法获取数据")
             except Exception as e:
                 print(f"[市场数据] 警告: 获取日期 {current_date} 的数据时发生异常: {str(e)}")
+        except Exception as e:
+            # 单个日期处理失败不应该导致整个资产更新失败
+            print(f"[市场数据] 警告: 处理日期 {current_date} 时发生异常: {type(e).__name__}: {str(e)}")
+            traceback.print_exc()
         
         # 移动到下一天
         current_date += timedelta(days=1)
