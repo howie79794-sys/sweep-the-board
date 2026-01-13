@@ -13,7 +13,7 @@ import traceback
 
 from database.config import get_db
 from database.models import User, Asset, MarketData, Ranking
-from services.market_data import update_asset_data, update_all_assets_data
+from services.market_data import update_asset_data, update_all_assets_data, get_latest_trading_date
 from services.ranking import save_rankings, get_or_set_baseline_price
 from services.storage import upload_avatar_file, delete_avatar, normalize_avatar_url
 from config import MAX_UPLOAD_SIZE, ALLOWED_EXTENSIONS, BASELINE_DATE
@@ -111,7 +111,9 @@ class MarketDataResponse(BaseModel):
     volume: Optional[float]
     turnover_rate: Optional[float]
     pe_ratio: Optional[float]
+    pb_ratio: Optional[float]
     market_cap: Optional[float]
+    eps_forecast: Optional[float]
     additional_data: Optional[dict]
     created_at: str
 
@@ -461,7 +463,9 @@ async def get_asset_data(
             "volume": data.volume,
             "turnover_rate": data.turnover_rate,
             "pe_ratio": data.pe_ratio,
+            "pb_ratio": data.pb_ratio,
             "market_cap": data.market_cap,
+            "eps_forecast": data.eps_forecast,
             "additional_data": None,
             "created_at": data.created_at.isoformat() if data.created_at else None
         }
@@ -497,7 +501,9 @@ async def get_latest_data(asset_id: int, db: Session = Depends(get_db)):
         "volume": latest.volume,
         "turnover_rate": latest.turnover_rate,
         "pe_ratio": latest.pe_ratio,
+        "pb_ratio": latest.pb_ratio,
         "market_cap": latest.market_cap,
+        "eps_forecast": latest.eps_forecast,
         "additional_data": None,
         "created_at": latest.created_at.isoformat() if latest.created_at else None
     }
@@ -670,6 +676,10 @@ async def get_all_assets_chart_data(
             else:
                 data_point["change_rate"] = None
             
+            # 添加 PE 和 PB 数据
+            data_point["pe_ratio"] = md.pe_ratio
+            data_point["pb_ratio"] = md.pb_ratio
+            
             data_points.append(data_point)
         
         if data_points:  # 只有当有数据点时才添加到结果中
@@ -697,6 +707,72 @@ async def get_market_types():
             "forex": ["主要货币对"]
         }
     }
+
+
+@router.get("/data/snapshot", tags=["data"])
+async def get_snapshot_data(db: Session = Depends(get_db)):
+    """
+    获取所有资产在"北京时间上个交易日"的最新快照数据
+    
+    返回每个资产的最新一条数据，包含：
+    - 关联用户信息
+    - 股票代码/名称
+    - 基准价格（2026/01/05的收盘价）
+    - 最新收盘价（上个交易日的成交价）
+    - 最新总市值（亿元）
+    - EPS预测
+    - 累计收益（相对于基准价格）
+    """
+    # 获取最新交易日
+    latest_trading_date = get_latest_trading_date(db)
+    
+    # 获取所有活跃资产
+    assets = db.query(Asset).join(User).filter(User.is_active == True).all()
+    
+    baseline_date_obj = date.fromisoformat(BASELINE_DATE) if isinstance(BASELINE_DATE, str) else BASELINE_DATE
+    
+    result = []
+    for asset in assets:
+        # 获取该资产在最新交易日的数据
+        latest_data = db.query(MarketData).filter(
+            MarketData.asset_id == asset.id,
+            MarketData.date == latest_trading_date
+        ).first()
+        
+        # 获取基准价格（2026/01/05的收盘价）
+        baseline_data = db.query(MarketData).filter(
+            MarketData.asset_id == asset.id,
+            MarketData.date == baseline_date_obj
+        ).first()
+        
+        baseline_price = baseline_data.close_price if baseline_data else asset.baseline_price
+        
+        # 计算累计收益
+        change_rate = None
+        if latest_data and baseline_price and baseline_price > 0:
+            change_rate = ((latest_data.close_price - baseline_price) / baseline_price) * 100
+        
+        result.append({
+            "asset_id": asset.id,
+            "code": asset.code,
+            "name": asset.name,
+            "user": {
+                "id": asset.user.id,
+                "name": asset.user.name,
+                "avatar_url": normalize_avatar_url(asset.user.avatar_url) if asset.user.avatar_url else None
+            },
+            "baseline_price": baseline_price,
+            "baseline_date": baseline_date_obj.isoformat(),
+            "latest_date": latest_trading_date.isoformat(),
+            "latest_close_price": latest_data.close_price if latest_data else None,
+            "latest_market_cap": latest_data.market_cap if latest_data else None,
+            "eps_forecast": latest_data.eps_forecast if latest_data else None,
+            "change_rate": change_rate,
+            "pe_ratio": latest_data.pe_ratio if latest_data else None,
+            "pb_ratio": latest_data.pb_ratio if latest_data else None,
+        })
+    
+    return result
 
 
 # ==================== 排名路由 ====================

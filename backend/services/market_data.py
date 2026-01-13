@@ -43,6 +43,56 @@ def is_trading_hours() -> bool:
     
     return market_open <= current_time <= market_close
 
+
+def get_latest_trading_date(db: Session, asset_id: Optional[int] = None) -> date:
+    """
+    获取最新交易日（北京时间）
+    
+    逻辑：
+    1. 获取当前北京时间
+    2. 如果是周末（周六、周日），回溯到周五
+    3. 如果是工作日，使用当前日期
+    4. 如果提供了 asset_id，查询数据库中该资产的最新有数据日期作为参考
+    
+    Args:
+        db: 数据库会话
+        asset_id: 资产ID（可选），如果提供则查询该资产的最新数据日期
+    
+    Returns:
+        date: 最新交易日的 date 对象
+    """
+    beijing_time = get_beijing_time()
+    today = beijing_time.date()
+    current_weekday = today.weekday()  # 0=Monday, 6=Sunday
+    
+    # 如果是周末，回溯到周五
+    if current_weekday == 5:  # 周六
+        latest_trading_date = today - timedelta(days=1)  # 周五
+    elif current_weekday == 6:  # 周日
+        latest_trading_date = today - timedelta(days=2)  # 周五
+    else:
+        latest_trading_date = today
+    
+    # 如果提供了 asset_id，查询数据库中该资产的最新有数据日期
+    if asset_id:
+        try:
+            latest_data = db.query(MarketData).filter(
+                MarketData.asset_id == asset_id
+            ).order_by(MarketData.date.desc()).first()
+            
+            if latest_data and latest_data.date < latest_trading_date:
+                # 如果数据库中的最新数据日期比计算出的交易日更早，使用数据库中的日期
+                # 这可以处理节假日等情况
+                pass  # 保持使用 latest_trading_date
+            elif latest_data and latest_data.date > latest_trading_date:
+                # 如果数据库中有未来的数据（不应该发生，但以防万一），使用数据库中的日期
+                latest_trading_date = latest_data.date
+        except Exception as e:
+            print(f"[市场数据] 查询资产最新数据日期时发生异常: {type(e).__name__}: {str(e)}")
+            # 继续使用计算出的日期
+    
+    return latest_trading_date
+
 # 尝试导入 yfinance
 try:
     import yfinance as yf
@@ -138,6 +188,68 @@ def format_date_for_baostock(date_input) -> str:
         raise ValueError(f"不支持的日期类型: {type(date_input)}")
 
 
+def fetch_financial_indicators_yfinance(ticker: yf.Ticker) -> Dict[str, float]:
+    """
+    从 yfinance ticker.info 获取财务指标
+    
+    Args:
+        ticker: yfinance Ticker 对象
+    
+    Returns:
+        dict: 包含财务指标的字典，如果获取失败则返回默认值
+    """
+    indicators = {
+        "pe_ratio": 0.0,
+        "pb_ratio": 0.0,
+        "market_cap": 0.0,
+        "eps_forecast": 0.0
+    }
+    
+    if not YFINANCE_AVAILABLE:
+        return indicators
+    
+    try:
+        info = ticker.info
+        
+        # 获取 trailingPE (市盈率)
+        if 'trailingPE' in info and info['trailingPE'] is not None:
+            try:
+                indicators["pe_ratio"] = float(info['trailingPE'])
+            except (ValueError, TypeError):
+                pass
+        
+        # 获取 priceToBook (市净率)
+        if 'priceToBook' in info and info['priceToBook'] is not None:
+            try:
+                indicators["pb_ratio"] = float(info['priceToBook'])
+            except (ValueError, TypeError):
+                pass
+        
+        # 获取 marketCap (总市值)，转换为亿元
+        if 'marketCap' in info and info['marketCap'] is not None:
+            try:
+                market_cap = float(info['marketCap'])
+                # 转换为亿元（除以 100,000,000）
+                indicators["market_cap"] = market_cap / 100000000.0
+            except (ValueError, TypeError):
+                pass
+        
+        # 获取 earningsEstimateNextYear (未来一年 EPS 预测)
+        if 'earningsEstimateNextYear' in info and info['earningsEstimateNextYear'] is not None:
+            try:
+                indicators["eps_forecast"] = float(info['earningsEstimateNextYear'])
+            except (ValueError, TypeError):
+                pass
+        
+        print(f"[市场数据] [财务指标] 获取成功: PE={indicators['pe_ratio']}, PB={indicators['pb_ratio']}, 市值={indicators['market_cap']:.2f}亿元, EPS预测={indicators['eps_forecast']}")
+        
+    except Exception as e:
+        print(f"[市场数据] [财务指标] 获取失败: {type(e).__name__}: {str(e)}")
+        # 返回默认值，不中断流程
+    
+    return indicators
+
+
 def fetch_realtime_price_yfinance(code: str) -> Optional[pd.DataFrame]:
     """
     使用 yfinance 获取盘中实时价格（仅在交易时间内使用）
@@ -170,6 +282,9 @@ def fetch_realtime_price_yfinance(code: str) -> Optional[pd.DataFrame]:
                 
                 print(f"[市场数据] [yfinance实时] 通过 fast_info 获取到实时价格: {last_price}")
                 
+                # 获取财务指标
+                financial_indicators = fetch_financial_indicators_yfinance(ticker)
+                
                 # 构造 DataFrame
                 data = {
                     'date': [today_str],
@@ -182,7 +297,11 @@ def fetch_realtime_price_yfinance(code: str) -> Optional[pd.DataFrame]:
                     'amplitude': [None],
                     'change_pct': [None],
                     'change_amount': [None],
-                    'turnover_rate': [None]
+                    'turnover_rate': [None],
+                    'pe_ratio': [financial_indicators['pe_ratio']],
+                    'pb_ratio': [financial_indicators['pb_ratio']],
+                    'market_cap': [financial_indicators['market_cap']],
+                    'eps_forecast': [financial_indicators['eps_forecast']]
                 }
                 
                 df = pd.DataFrame(data)
@@ -280,6 +399,9 @@ def fetch_stock_data_yfinance(code: str, start_date: str, end_date: str, use_rea
                 if last_price and not pd.isna(last_price):
                     print(f"[市场数据] [yfinance] 成功获取实时价格: {last_price}")
                     
+                    # 获取财务指标
+                    financial_indicators = fetch_financial_indicators_yfinance(ticker)
+                    
                     # 构造 DataFrame
                     data = {
                         'date': [today_str],
@@ -292,7 +414,11 @@ def fetch_stock_data_yfinance(code: str, start_date: str, end_date: str, use_rea
                         'amplitude': [None],
                         'change_pct': [None],
                         'change_amount': [None],
-                        'turnover_rate': [None]
+                        'turnover_rate': [None],
+                        'pe_ratio': [financial_indicators['pe_ratio']],
+                        'pb_ratio': [financial_indicators['pb_ratio']],
+                        'market_cap': [financial_indicators['market_cap']],
+                        'eps_forecast': [financial_indicators['eps_forecast']]
                     }
                     
                     df = pd.DataFrame(data)
@@ -353,6 +479,21 @@ def fetch_stock_data_yfinance(code: str, start_date: str, end_date: str, use_rea
         
         # 确保列顺序正确
         df = df[expected_cols]
+        
+        # 获取财务指标（PE, PB, 市值, EPS预测）
+        try:
+            financial_indicators = fetch_financial_indicators_yfinance(ticker)
+            # 将财务指标添加到每一行（因为财务指标是当前值，不是历史值）
+            for key, value in financial_indicators.items():
+                df[key] = value
+        except Exception as e:
+            print(f"[市场数据] [yfinance] 获取财务指标时发生异常: {type(e).__name__}: {str(e)}")
+            # 即使财务指标获取失败，也继续返回历史数据
+            # 设置默认值
+            df['pe_ratio'] = 0.0
+            df['pb_ratio'] = 0.0
+            df['market_cap'] = 0.0
+            df['eps_forecast'] = 0.0
         
         print(f"[市场数据] [yfinance] 数据处理完成")
         return df
@@ -770,7 +911,9 @@ def parse_market_data(df: pd.DataFrame, asset_type: str, code: str) -> List[Dict
                 "volume": None,
                 "turnover_rate": None,
                 "pe_ratio": None,
+                "pb_ratio": None,
                 "market_cap": None,
+                "eps_forecast": None,
                 "additional_data": {}
             }
             
@@ -813,9 +956,45 @@ def parse_market_data(df: pd.DataFrame, asset_type: str, code: str) -> List[Dict
                 except (ValueError, TypeError):
                     pass
             
+            # 处理市盈率
+            if 'pe_ratio' in row:
+                try:
+                    val = row['pe_ratio']
+                    if pd.notna(val) and val is not None:
+                        data["pe_ratio"] = float(val)
+                except (ValueError, TypeError):
+                    pass
+            
+            # 处理市净率
+            if 'pb_ratio' in row:
+                try:
+                    val = row['pb_ratio']
+                    if pd.notna(val) and val is not None:
+                        data["pb_ratio"] = float(val)
+                except (ValueError, TypeError):
+                    pass
+            
+            # 处理总市值
+            if 'market_cap' in row:
+                try:
+                    val = row['market_cap']
+                    if pd.notna(val) and val is not None:
+                        data["market_cap"] = float(val)
+                except (ValueError, TypeError):
+                    pass
+            
+            # 处理EPS预测
+            if 'eps_forecast' in row:
+                try:
+                    val = row['eps_forecast']
+                    if pd.notna(val) and val is not None:
+                        data["eps_forecast"] = float(val)
+                except (ValueError, TypeError):
+                    pass
+            
             # 其他数据存入additional_data
             for col in df.columns:
-                if col not in ['date', 'close', '净值', 'close_price', 'volume', 'turnover_rate', '换手率']:
+                if col not in ['date', 'close', '净值', 'close_price', 'volume', 'turnover_rate', '换手率', 'pe_ratio', 'pb_ratio', 'market_cap', 'eps_forecast']:
                     if pd.notna(row[col]) and row[col] is not None:
                         try:
                             data["additional_data"][col] = float(row[col]) if isinstance(row[col], (int, float)) else str(row[col])
@@ -979,7 +1158,9 @@ def store_market_data(
                 existing.volume = data.get("volume")
                 existing.turnover_rate = data.get("turnover_rate")
                 existing.pe_ratio = data.get("pe_ratio")
+                existing.pb_ratio = data.get("pb_ratio")
                 existing.market_cap = data.get("market_cap")
+                existing.eps_forecast = data.get("eps_forecast")
                 if data.get("additional_data"):
                     existing.additional_data = json.dumps(data["additional_data"], ensure_ascii=False)
                 updated_count += 1
@@ -994,7 +1175,9 @@ def store_market_data(
                     volume=data.get("volume"),
                     turnover_rate=data.get("turnover_rate"),
                     pe_ratio=data.get("pe_ratio"),
+                    pb_ratio=data.get("pb_ratio"),
                     market_cap=data.get("market_cap"),
+                    eps_forecast=data.get("eps_forecast"),
                     additional_data=json.dumps(data.get("additional_data", {}), ensure_ascii=False) if data.get("additional_data") else None
                 )
                 db.add(market_data)
@@ -1119,6 +1302,40 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
             print(f"[市场数据] 基准日期数据补全完成，存储了 {baseline_stored_count} 条数据")
         else:
             print(f"[市场数据] 警告: 无法获取基准日期数据")
+    
+    # 增量更新检查：如果不是强制更新，检查最新交易日是否已有数据
+    if not force:
+        latest_trading_date = get_latest_trading_date(db, asset_id)
+        print(f"[市场数据] 检查最新交易日 {latest_trading_date} 的数据是否已存在...")
+        
+        # 查询数据库中该资产在该交易日是否已有完整数据
+        existing_data = db.query(MarketData).filter(
+            MarketData.asset_id == asset_id,
+            MarketData.date == latest_trading_date
+        ).first()
+        
+        if existing_data:
+            # 检查数据是否完整
+            # 1. close_price 必须不为空
+            # 2. 关键财务指标（pe_ratio, pb_ratio, market_cap）至少有一个不为空
+            has_price = existing_data.close_price is not None
+            has_financial_indicators = (
+                (existing_data.pe_ratio is not None and existing_data.pe_ratio != 0) or
+                (existing_data.pb_ratio is not None and existing_data.pb_ratio != 0) or
+                (existing_data.market_cap is not None and existing_data.market_cap != 0)
+            )
+            
+            if has_price and has_financial_indicators:
+                print(f"[市场数据] 数据已存在，跳过获取 (日期: {latest_trading_date}, 价格: {existing_data.close_price})")
+                return {
+                    "success": True,
+                    "message": f"数据已存在，跳过获取 (最新交易日: {latest_trading_date})",
+                    "stored_count": 0
+                }
+            else:
+                print(f"[市场数据] 数据存在但不完整，将继续获取 (价格: {has_price}, 财务指标: {has_financial_indicators})")
+        else:
+            print(f"[市场数据] 最新交易日 {latest_trading_date} 的数据不存在，将继续获取")
     
     try:
         print(f"[市场数据] 调用 fetch_asset_data 获取数据...")

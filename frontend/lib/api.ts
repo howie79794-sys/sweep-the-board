@@ -207,6 +207,7 @@ export const dataAPI = {
     if (params?.end_date) query.append('end_date', params.end_date)
     return fetchAPI<any[]>(`/api/data/charts/all?${query}`)
   },
+  getSnapshotData: () => fetchAPI<any[]>('/api/data/snapshot'),
   update: (assetIds?: number[], force?: boolean) => {
     // 构建请求体，确保格式正确
     const requestBody: { asset_ids?: number[] | null; force: boolean } = {

@@ -55,7 +55,9 @@ class MarketData(Base):
     volume = Column(Float, nullable=True)
     turnover_rate = Column(Float, nullable=True)
     pe_ratio = Column(Float, nullable=True)
+    pb_ratio = Column(Float, nullable=True)
     market_cap = Column(Float, nullable=True)
+    eps_forecast = Column(Float, nullable=True)
     additional_data = Column(Text, nullable=True)  # JSON string
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
