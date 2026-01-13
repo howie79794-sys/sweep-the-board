@@ -67,7 +67,14 @@ export function PBRatioChart({
 
       setAssets(data)
 
-      // 将所有资产的数据合并到同一个日期轴上
+      // 辅助函数：判断是否为工作日（周一到周五）
+      const isWeekday = (dateStr: string): boolean => {
+        const date = new Date(dateStr)
+        const day = date.getDay() // 0 = 周日, 6 = 周六
+        return day >= 1 && day <= 5 // 周一到周五
+      }
+
+      // 将所有资产的数据合并到同一个日期轴上，只包含工作日
       const dateMap = new Map<string, Record<string, string | number | null>>()
       // 存储每个资产代码的最近有效值，用于兜底
       const lastValidValues = new Map<string, Map<string, number>>()
@@ -80,6 +87,11 @@ export function PBRatioChart({
 
         asset.data.forEach((point: DataPoint) => {
           const date = point.date
+          // 跳过周末（非工作日）
+          if (!isWeekday(date)) {
+            return
+          }
+          
           if (!dateMap.has(date)) {
             dateMap.set(date, { date, originalDate: date })
           }

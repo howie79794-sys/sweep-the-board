@@ -48,11 +48,21 @@ export function AssetChart({
         end_date: asset.end_date,
       })
 
+      // 辅助函数：判断是否为工作日（周一到周五）
+      const isWeekday = (dateStr: string): boolean => {
+        const date = new Date(dateStr)
+        const day = date.getDay() // 0 = 周日, 6 = 周六
+        return day >= 1 && day <= 5 // 周一到周五
+      }
+
+      // 过滤掉周末（非工作日）
+      const weekdayData = data.filter((item: any) => isWeekday(item.date))
+
       const baselinePrice = asset.baseline_price ?? 0
 
       if (baselinePrice > 0 && showChangeRate) {
         // 计算涨跌幅
-        const formatted = data.map((item: any) => {
+        const formatted = weekdayData.map((item: any) => {
           const changeRate =
             ((item.close_price - baselinePrice) / baselinePrice) * 100
           return {
@@ -67,7 +77,7 @@ export function AssetChart({
         setChartData(formatted)
       } else {
         // 如果没有基准价格或不需要显示涨跌幅，只显示价格
-        const formatted = data.map((item: any) => ({
+        const formatted = weekdayData.map((item: any) => ({
           date: new Date(item.date).toLocaleDateString("zh-CN", {
             month: "short",
             day: "numeric",
