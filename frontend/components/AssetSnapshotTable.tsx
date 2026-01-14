@@ -18,6 +18,8 @@ interface SnapshotData {
   baseline_date: string
   latest_date: string
   latest_close_price: number | null
+  yesterday_close_price: number | null
+  daily_change_rate: number | null
   latest_market_cap: number | null
   eps_forecast: number | null
   change_rate: number | null
@@ -25,14 +27,15 @@ interface SnapshotData {
   pb_ratio: number | null
 }
 
-type SortField = "market_cap" | "change_rate" | null
+type SortField = "baseline_price" | "latest_close_price" | "market_cap" | "eps_forecast" | "change_rate" | "daily_change_rate" | null
 type SortDirection = "asc" | "desc"
 
 export function AssetSnapshotTable({ className }: { className?: string }) {
   const [data, setData] = useState<SnapshotData[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [sortField, setSortField] = useState<SortField>(null)
+  // 默认按累计收益从高到低排序
+  const [sortField, setSortField] = useState<SortField>("change_rate")
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc")
 
   useEffect(() => {
@@ -70,12 +73,24 @@ export function AssetSnapshotTable({ className }: { className?: string }) {
     let aValue: number | null = null
     let bValue: number | null = null
 
-    if (sortField === "market_cap") {
+    if (sortField === "baseline_price") {
+      aValue = a.baseline_price
+      bValue = b.baseline_price
+    } else if (sortField === "latest_close_price") {
+      aValue = a.latest_close_price
+      bValue = b.latest_close_price
+    } else if (sortField === "market_cap") {
       aValue = a.latest_market_cap
       bValue = b.latest_market_cap
+    } else if (sortField === "eps_forecast") {
+      aValue = a.eps_forecast
+      bValue = b.eps_forecast
     } else if (sortField === "change_rate") {
       aValue = a.change_rate
       bValue = b.change_rate
+    } else if (sortField === "daily_change_rate") {
+      aValue = a.daily_change_rate
+      bValue = b.daily_change_rate
     }
 
     // 处理 null 值
@@ -120,9 +135,35 @@ export function AssetSnapshotTable({ className }: { className?: string }) {
         <thead>
           <tr className="bg-gray-100">
             <th className="border p-2 text-left font-bold">关联用户</th>
-            <th className="border p-2 text-left font-bold">股票代码/名称</th>
-            <th className="border p-2 text-left font-bold">基准价格</th>
-            <th className="border p-2 text-left font-bold">最新收盘价</th>
+            <th className="border p-2 text-left font-bold">股票代码</th>
+            <th className="border p-2 text-left font-bold">名称</th>
+            <th
+              className="border p-2 text-left font-bold cursor-pointer hover:bg-gray-200"
+              onClick={() => handleSort("baseline_price")}
+            >
+              基准价格
+              {sortField === "baseline_price" && (
+                <span className="ml-1">{sortDirection === "asc" ? "↑" : "↓"}</span>
+              )}
+            </th>
+            <th
+              className="border p-2 text-left font-bold cursor-pointer hover:bg-gray-200"
+              onClick={() => handleSort("latest_close_price")}
+            >
+              最新收盘价
+              {sortField === "latest_close_price" && (
+                <span className="ml-1">{sortDirection === "asc" ? "↑" : "↓"}</span>
+              )}
+            </th>
+            <th
+              className="border p-2 text-left font-bold cursor-pointer hover:bg-gray-200"
+              onClick={() => handleSort("daily_change_rate")}
+            >
+              涨跌幅
+              {sortField === "daily_change_rate" && (
+                <span className="ml-1">{sortDirection === "asc" ? "↑" : "↓"}</span>
+              )}
+            </th>
             <th
               className="border p-2 text-left font-bold cursor-pointer hover:bg-gray-200"
               onClick={() => handleSort("market_cap")}
@@ -132,7 +173,15 @@ export function AssetSnapshotTable({ className }: { className?: string }) {
                 <span className="ml-1">{sortDirection === "asc" ? "↑" : "↓"}</span>
               )}
             </th>
-            <th className="border p-2 text-left font-bold">EPS 预测</th>
+            <th
+              className="border p-2 text-left font-bold cursor-pointer hover:bg-gray-200"
+              onClick={() => handleSort("eps_forecast")}
+            >
+              EPS 预测
+              {sortField === "eps_forecast" && (
+                <span className="ml-1">{sortDirection === "asc" ? "↑" : "↓"}</span>
+              )}
+            </th>
             <th
               className="border p-2 text-left font-bold cursor-pointer hover:bg-gray-200"
               onClick={() => handleSort("change_rate")}
@@ -145,29 +194,36 @@ export function AssetSnapshotTable({ className }: { className?: string }) {
           </tr>
         </thead>
         <tbody>
-          {sortedData.map((item) => (
-            <tr key={item.asset_id} className="hover:bg-gray-50">
-              <td className="border p-2">{item.user.name}</td>
-              <td className="border p-2">
-                {item.code} {item.name}
-              </td>
-              <td className="border p-2">
-                {formatNumber(item.baseline_price)}
-              </td>
-              <td className="border p-2">
-                {formatNumber(item.latest_close_price)}
-              </td>
-              <td className="border p-2">
-                {formatNumber(item.latest_market_cap)}
-              </td>
-              <td className="border p-2">
-                {formatNumber(item.eps_forecast)}
-              </td>
-              <td className="border p-2">
-                {formatPercent(item.change_rate)}
-              </td>
-            </tr>
-          ))}
+          {sortedData.map((item) => {
+            // 累计收益颜色：正数或0为红色，负数为绿色
+            const changeRateColor = item.change_rate !== null && item.change_rate < 0 ? "text-green-600" : "text-red-600"
+            
+            return (
+              <tr key={item.asset_id} className="hover:bg-gray-50">
+                <td className="border p-2">{item.user.name}</td>
+                <td className="border p-2">{item.code}</td>
+                <td className="border p-2">{item.name}</td>
+                <td className="border p-2">
+                  {formatNumber(item.baseline_price)}
+                </td>
+                <td className="border p-2">
+                  {formatNumber(item.latest_close_price)}
+                </td>
+                <td className="border p-2">
+                  {item.daily_change_rate !== null ? formatPercent(item.daily_change_rate) : "--"}
+                </td>
+                <td className="border p-2">
+                  {formatNumber(item.latest_market_cap)}
+                </td>
+                <td className="border p-2">
+                  {formatNumber(item.eps_forecast)}
+                </td>
+                <td className={`border p-2 ${changeRateColor}`}>
+                  {formatPercent(item.change_rate)}
+                </td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>

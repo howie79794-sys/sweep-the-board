@@ -805,6 +805,20 @@ async def get_snapshot_data(db: Session = Depends(get_db)):
         if latest_data and baseline_price and baseline_price > 0:
             change_rate = ((latest_data.close_price - baseline_price) / baseline_price) * 100
         
+        # 获取昨天的收盘价（用于计算涨跌幅）
+        # 查找最新交易日之前最近的一个交易日的数据
+        yesterday_data = db.query(MarketData).filter(
+            MarketData.asset_id == asset.id,
+            MarketData.date < latest_trading_date
+        ).order_by(MarketData.date.desc()).first()
+        
+        yesterday_close_price = yesterday_data.close_price if yesterday_data else None
+        
+        # 计算今天对比昨天的涨跌幅
+        daily_change_rate = None
+        if latest_data and yesterday_close_price and yesterday_close_price > 0:
+            daily_change_rate = ((latest_data.close_price - yesterday_close_price) / yesterday_close_price) * 100
+        
         # 显式获取财务指标，确保字段存在
         pe_ratio = latest_data.pe_ratio if latest_data and latest_data.pe_ratio is not None else None
         pb_ratio = latest_data.pb_ratio if latest_data and latest_data.pb_ratio is not None else None
@@ -828,6 +842,8 @@ async def get_snapshot_data(db: Session = Depends(get_db)):
             "baseline_date": baseline_date_obj.isoformat(),
             "latest_date": latest_trading_date.isoformat(),
             "latest_close_price": latest_data.close_price if latest_data else None,
+            "yesterday_close_price": yesterday_close_price,
+            "daily_change_rate": daily_change_rate,
             "latest_market_cap": market_cap,
             "eps_forecast": eps_forecast,
             "change_rate": change_rate,
