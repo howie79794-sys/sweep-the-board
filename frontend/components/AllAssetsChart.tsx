@@ -48,6 +48,7 @@ export function AllAssetsChart({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [assets, setAssets] = useState<AssetChartData[]>([])
+  const [selectedAssetCode, setSelectedAssetCode] = useState<string | null>(null)
 
   useEffect(() => {
     loadChartData()
@@ -208,6 +209,18 @@ export function AllAssetsChart({
     }
   }
 
+  // 处理图例点击事件
+  const handleLegendClick = (e: any) => {
+    const clickedCode = e.dataKey || e.value
+    if (selectedAssetCode === clickedCode) {
+      // 取消选中
+      setSelectedAssetCode(null)
+    } else {
+      // 选中新的股票
+      setSelectedAssetCode(clickedCode)
+    }
+  }
+
   return (
     <div className={cn("w-full", className)}>
       <div className="mb-4">
@@ -242,19 +255,29 @@ export function AllAssetsChart({
                 return formatNumber(numValue)
               }}
             />
-            <Legend />
-            {assets.map((asset: AssetChartData, index: number) => (
-              <Line
-                key={asset.code}
-                type="monotone"
-                dataKey={asset.code}
-                stroke={colors[index % colors.length]}
-                name={asset.code}
-                strokeWidth={2}
-                dot={false}
-                connectNulls
-              />
-            ))}
+            <Legend 
+              onClick={handleLegendClick}
+              wrapperStyle={{ cursor: 'pointer' }}
+            />
+            {assets.map((asset: AssetChartData, index: number) => {
+              const isSelected = selectedAssetCode === null || selectedAssetCode === asset.code
+              const opacity = selectedAssetCode === null ? 1 : (isSelected ? 1 : 0.3)
+              const strokeWidth = isSelected ? 3 : 2
+              
+              return (
+                <Line
+                  key={asset.code}
+                  type="monotone"
+                  dataKey={asset.code}
+                  stroke={colors[index % colors.length]}
+                  name={asset.code}
+                  strokeWidth={strokeWidth}
+                  strokeOpacity={opacity}
+                  dot={false}
+                  connectNulls
+                />
+              )
+            })}
           </LineChart>
         </ResponsiveContainer>
       </div>
