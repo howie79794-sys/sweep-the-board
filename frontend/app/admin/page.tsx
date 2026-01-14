@@ -684,7 +684,7 @@ export default function AdminPage() {
                         {asset.code} | {asset.market} | {asset.asset_type}
                       </div>
                       <div className="text-sm text-muted-foreground mt-1">
-                        用户ID: {asset.user_id} | 基准价: {asset.baseline_price || "未设置"}
+                        关联用户: {asset.user?.name || `用户ID: ${asset.user_id}`} | 基准价: {asset.baseline_price || "未设置"}
                       </div>
                     </div>
                     <div className="flex gap-2">
