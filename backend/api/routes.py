@@ -799,6 +799,7 @@ async def get_snapshot_data(db: Session = Depends(get_db)):
         ).first()
         
         baseline_price = baseline_data.close_price if baseline_data else asset.baseline_price
+        baseline_pe_ratio = baseline_data.pe_ratio if baseline_data and baseline_data.pe_ratio is not None else None
         
         # 计算累计收益
         change_rate = None
@@ -849,6 +850,7 @@ async def get_snapshot_data(db: Session = Depends(get_db)):
             "change_rate": change_rate,
             "pe_ratio": pe_ratio,
             "pb_ratio": pb_ratio,
+            "baseline_pe_ratio": baseline_pe_ratio,
         })
     
     return result

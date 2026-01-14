@@ -4,6 +4,7 @@ import { useState, useEffect } from "react"
 import { dataAPI } from "@/lib/api"
 import { formatPercent, formatNumber } from "@/lib/utils"
 import { cn } from "@/lib/utils"
+import { UserAvatar } from "@/components/UserAvatar"
 
 interface SnapshotData {
   asset_id: number
@@ -25,9 +26,10 @@ interface SnapshotData {
   change_rate: number | null
   pe_ratio: number | null
   pb_ratio: number | null
+  baseline_pe_ratio: number | null
 }
 
-type SortField = "baseline_price" | "latest_close_price" | "market_cap" | "eps_forecast" | "change_rate" | "daily_change_rate" | null
+type SortField = "baseline_price" | "latest_close_price" | "market_cap" | "eps_forecast" | "change_rate" | "daily_change_rate" | "valuation_expansion" | null
 type SortDirection = "asc" | "desc"
 
 export function AssetSnapshotTable({ className }: { className?: string }) {
@@ -91,6 +93,16 @@ export function AssetSnapshotTable({ className }: { className?: string }) {
     } else if (sortField === "daily_change_rate") {
       aValue = a.daily_change_rate
       bValue = b.daily_change_rate
+    } else if (sortField === "valuation_expansion") {
+      // 计算估值扩张：(今日PE / 1月5日PE - 1) * 100%
+      const aValuationExpansion = a.pe_ratio && a.baseline_pe_ratio && a.baseline_pe_ratio > 0 
+        ? ((a.pe_ratio / a.baseline_pe_ratio - 1) * 100) 
+        : null
+      const bValuationExpansion = b.pe_ratio && b.baseline_pe_ratio && b.baseline_pe_ratio > 0 
+        ? ((b.pe_ratio / b.baseline_pe_ratio - 1) * 100) 
+        : null
+      aValue = aValuationExpansion
+      bValue = bValuationExpansion
     }
 
     // 处理 null 值
@@ -124,6 +136,23 @@ export function AssetSnapshotTable({ className }: { className?: string }) {
         <p className="text-muted-foreground">暂无数据</p>
       </div>
     )
+  }
+
+  // 格式化市值（亿元，保留两位小数）
+  const formatMarketCap = (value: number | null | undefined): string => {
+    if (value === null || value === undefined) return "--"
+    return `${value.toFixed(2)} 亿元`
+  }
+
+  // 计算估值扩张并格式化
+  const calculateValuationExpansion = (peRatio: number | null, baselinePeRatio: number | null): { value: number | null; color: string } => {
+    if (peRatio === null || baselinePeRatio === null || baselinePeRatio <= 0) {
+      return { value: null, color: "" }
+    }
+    const expansion = ((peRatio / baselinePeRatio - 1) * 100)
+    // 正数且很大用红色，负数用绿色
+    const color = expansion > 0 ? "text-red-600" : "text-green-600"
+    return { value: expansion, color }
   }
 
   return (
@@ -191,6 +220,15 @@ export function AssetSnapshotTable({ className }: { className?: string }) {
                 <span className="ml-1">{sortDirection === "asc" ? "↑" : "↓"}</span>
               )}
             </th>
+            <th
+              className="border p-2 text-left font-bold cursor-pointer hover:bg-gray-200"
+              onClick={() => handleSort("valuation_expansion")}
+            >
+              估值扩张
+              {sortField === "valuation_expansion" && (
+                <span className="ml-1">{sortDirection === "asc" ? "↑" : "↓"}</span>
+              )}
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -198,9 +236,26 @@ export function AssetSnapshotTable({ className }: { className?: string }) {
             // 累计收益颜色：正数或0为红色，负数为绿色
             const changeRateColor = item.change_rate !== null && item.change_rate < 0 ? "text-green-600" : "text-red-600"
             
+            // 计算估值扩张
+            const valuationExpansion = calculateValuationExpansion(item.pe_ratio, item.baseline_pe_ratio)
+            
             return (
               <tr key={item.asset_id} className="hover:bg-gray-50">
-                <td className="border p-2">{item.user.name}</td>
+                <td className="border p-2">
+                  <div className="flex items-center gap-2">
+                    <UserAvatar 
+                      user={{
+                        id: item.user.id,
+                        name: item.user.name,
+                        avatar_url: item.user.avatar_url || undefined,
+                        created_at: "",
+                        is_active: true
+                      }} 
+                      size="sm" 
+                    />
+                    <span>{item.user.name}</span>
+                  </div>
+                </td>
                 <td className="border p-2">{item.code}</td>
                 <td className="border p-2">{item.name}</td>
                 <td className="border p-2">
@@ -213,13 +268,16 @@ export function AssetSnapshotTable({ className }: { className?: string }) {
                   {item.daily_change_rate !== null ? formatPercent(item.daily_change_rate) : "--"}
                 </td>
                 <td className="border p-2">
-                  {formatNumber(item.latest_market_cap)}
+                  {formatMarketCap(item.latest_market_cap)}
                 </td>
                 <td className="border p-2">
                   {formatNumber(item.eps_forecast)}
                 </td>
                 <td className={`border p-2 ${changeRateColor}`}>
                   {formatPercent(item.change_rate)}
+                </td>
+                <td className={`border p-2 ${valuationExpansion.color}`}>
+                  {valuationExpansion.value !== null ? formatPercent(valuationExpansion.value) : "--"}
                 </td>
               </tr>
             )
