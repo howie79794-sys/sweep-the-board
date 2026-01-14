@@ -1288,51 +1288,64 @@ def store_market_data(
 
 def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
     """
-    更新资产数据 - 自动补全历史缺失数据
+    更新资产数据 - 区分"今日"强制刷新和"历史"按需补全
+    
+    "今日"逻辑：
+    - 获取当前自然日（北京时间）
+    - 对于数据库中日期等于"今日"的记录，每次点击更新都强制发起 API 请求
+    - 如果今日 API 返回空（未开盘或接口延迟），则继续执行回溯逻辑，取上一个交易日的价格作为临时值，并在日志中标记为临时数据
+    
+    "历史"逻辑：
+    - 对于日期早于"今日"的所有记录：
+    - 优先查库：如果 close_price 且 pe_ratio 等核心指标均不为空，则直接跳过
+    - 按需补全：只有当数据库中该历史记录缺失或指标全为 null 时，才发起 API 请求获取
     
     Args:
         asset_id: 资产ID
         db: 数据库会话
-        force: 是否强制更新（即使已有数据）
+        force: 是否强制更新（即使已有数据）- 此参数保留但不再使用，因为"今日"逻辑已强制刷新
     
     Returns:
-        {"success": bool, "message": str, "stored_count": int, "new_data_count": int, "filled_metrics_count": int}
+        {"success": bool, "message": str, "stored_count": int, "new_data_count": int, "filled_metrics_count": int, "today_updated": bool}
     """
     print(f"[市场数据] ========== 开始更新资产数据 (asset_id={asset_id}, force={force}) ==========")
     
     asset = db.query(Asset).filter(Asset.id == asset_id).first()
     if not asset:
         print(f"[市场数据] 错误: 资产不存在 (asset_id={asset_id})")
-        return {"success": False, "message": "资产不存在", "stored_count": 0, "new_data_count": 0, "filled_metrics_count": 0}
+        return {"success": False, "message": "资产不存在", "stored_count": 0, "new_data_count": 0, "filled_metrics_count": 0, "today_updated": False}
     
     print(f"[市场数据] 资产信息: ID={asset.id}, 名称={asset.name}, 代码={asset.code}, 类型={asset.asset_type}")
     
+    # 获取当前自然日（北京时间）
+    beijing_time = get_beijing_time()
+    today = beijing_time.date()
+    
     # 确定扫描日期范围：从基准日期到今天
     baseline_date_obj = date.fromisoformat(BASELINE_DATE) if isinstance(BASELINE_DATE, str) else BASELINE_DATE
-    today = date.today()
     
-    print(f"[市场数据] 扫描日期范围: {baseline_date_obj} 至 {today}")
+    print(f"[市场数据] 扫描日期范围: {baseline_date_obj} 至 {today} (今日: {today})")
     
-    # 获取最新的财务指标（作为基准用于反推）
-    # 查找有完整财务指标的最新记录
+    # 统计变量
+    new_data_count = 0  # 新增的数据记录数
+    filled_metrics_count = 0  # 补全财务指标的记录数
+    skipped_count = 0  # 跳过的完整记录数
+    today_updated = False  # 今日是否更新成功
+    today_is_temporary = False  # 今日数据是否为临时数据
+    
+    # 获取最新的财务指标（作为基准用于反推历史数据）
     latest_with_metrics = db.query(MarketData).filter(
         MarketData.asset_id == asset_id,
         MarketData.pe_ratio.isnot(None),
         MarketData.pe_ratio != 0
     ).order_by(MarketData.date.desc()).first()
     
-    # 如果没有找到有财务指标的记录，尝试获取最新的记录（可能只有价格）
     if not latest_with_metrics:
         latest_with_metrics = db.query(MarketData).filter(
             MarketData.asset_id == asset_id
         ).order_by(MarketData.date.desc()).first()
     
-    # 统计变量
-    new_data_count = 0  # 新增的数据记录数
-    filled_metrics_count = 0  # 补全财务指标的记录数
-    skipped_count = 0  # 跳过的完整记录数
-    
-    # 获取最新的财务指标（用于反推）
+    # 获取基准财务指标（用于反推历史数据）
     ref_pe = None
     ref_pb = None
     ref_market_cap = None
@@ -1350,34 +1363,157 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
         
         print(f"[市场数据] 基准财务指标 (日期: {ref_date}): PE={ref_pe}, PB={ref_pb}, 市值={ref_market_cap}, EPS={ref_eps}, 价格={ref_price}")
     
-    # 如果还没有财务指标，先尝试获取最新的财务指标
-    if not ref_pe and asset.asset_type == "stock":
-        print(f"[市场数据] 未找到财务指标基准，尝试获取最新财务指标...")
-        try:
-            # 获取今天的数据（包含财务指标）
-            today_data_list = fetch_asset_data(
-                code=asset.code,
-                asset_type=asset.asset_type,
-                start_date=today.isoformat(),
-                end_date=today.isoformat(),
-                db=db
-            )
-            if today_data_list and len(today_data_list) > 0:
-                today_data = today_data_list[0]
-                if today_data.get("pe_ratio") and today_data.get("pe_ratio") != 0:
-                    ref_pe = today_data.get("pe_ratio")
-                    ref_pb = today_data.get("pb_ratio") if today_data.get("pb_ratio") else None
-                    ref_market_cap = today_data.get("market_cap") if today_data.get("market_cap") and today_data.get("market_cap") > 0 else None
-                    ref_eps = today_data.get("eps_forecast") if today_data.get("eps_forecast") else None
-                    ref_price = today_data.get("close_price")
-                    ref_date = date.fromisoformat(today_data.get("date"))
-                    print(f"[市场数据] 成功获取最新财务指标: PE={ref_pe}, PB={ref_pb}, 市值={ref_market_cap}, EPS={ref_eps}")
-        except Exception as e:
-            print(f"[市场数据] 获取最新财务指标失败: {str(e)}")
+    # ========== 第一步：处理"今日"数据（强制刷新） ==========
+    print(f"[市场数据] ========== 【今日实时覆盖】开始处理今日数据 ({today}) ==========")
     
-    # 遍历日期范围内的每一天
+    try:
+        # 强制发起 API 请求获取今日数据
+        print(f"[市场数据] [今日实时覆盖] 强制发起 API 请求获取今日数据...")
+        today_data_list = fetch_asset_data(
+            code=asset.code,
+            asset_type=asset.asset_type,
+            start_date=today.isoformat(),
+            end_date=today.isoformat(),
+            db=db
+        )
+        
+        if today_data_list and len(today_data_list) > 0:
+            today_data = today_data_list[0]
+            today_price = today_data.get("close_price")
+            today_pe = today_data.get("pe_ratio")
+            today_pb = today_data.get("pb_ratio")
+            today_market_cap = today_data.get("market_cap")
+            today_eps = today_data.get("eps_forecast")
+            
+            if today_price:
+                # API 返回了今日数据，检查数据库中是否已有今日记录
+                existing_today = db.query(MarketData).filter(
+                    MarketData.asset_id == asset_id,
+                    MarketData.date == today
+                ).first()
+                
+                if existing_today:
+                    # 更新现有记录（覆盖早盘的临时数据）
+                    print(f"[市场数据] [今日实时覆盖] 更新今日记录: 价格={today_price}, PE={today_pe}, PB={today_pb}, 市值={today_market_cap}")
+                    existing_today.close_price = today_price
+                    existing_today.volume = today_data.get("volume")
+                    existing_today.turnover_rate = today_data.get("turnover_rate")
+                    
+                    # 更新财务指标（如果 API 返回了值）
+                    if today_pe is not None:
+                        existing_today.pe_ratio = today_pe
+                    if today_pb is not None:
+                        existing_today.pb_ratio = today_pb
+                    if today_market_cap is not None and today_market_cap > 0:
+                        existing_today.market_cap = today_market_cap
+                    if today_eps is not None:
+                        existing_today.eps_forecast = today_eps
+                    
+                    if today_data.get("additional_data"):
+                        existing_today.additional_data = json.dumps(today_data.get("additional_data", {}), ensure_ascii=False)
+                    
+                    today_updated = True
+                    print(f"[市场数据] [今日实时覆盖] ✓ 成功覆盖今日数据: 价格={today_price}, PE={existing_today.pe_ratio}, PB={existing_today.pb_ratio}, 市值={existing_today.market_cap}")
+                else:
+                    # 创建新记录
+                    print(f"[市场数据] [今日实时覆盖] 创建今日新记录: 价格={today_price}, PE={today_pe}, PB={today_pb}, 市值={today_market_cap}")
+                    market_data = MarketData(
+                        asset_id=asset_id,
+                        date=today,
+                        close_price=today_price,
+                        volume=today_data.get("volume"),
+                        turnover_rate=today_data.get("turnover_rate"),
+                        pe_ratio=today_pe,
+                        pb_ratio=today_pb,
+                        market_cap=today_market_cap if today_market_cap and today_market_cap > 0 else None,
+                        eps_forecast=today_eps,
+                        additional_data=json.dumps(today_data.get("additional_data", {}), ensure_ascii=False) if today_data.get("additional_data") else None
+                    )
+                    db.add(market_data)
+                    new_data_count += 1
+                    today_updated = True
+                    print(f"[市场数据] [今日实时覆盖] ✓ 成功创建今日数据")
+            else:
+                print(f"[市场数据] [今日实时覆盖] 警告: API 返回了数据但价格为空")
+        else:
+            # API 返回空（未开盘或接口延迟），执行回溯逻辑
+            print(f"[市场数据] [今日实时覆盖] API 返回空，执行回溯逻辑获取临时数据...")
+            
+            # 从数据库中查找最近一个交易日的数据
+            latest_data = db.query(MarketData).filter(
+                MarketData.asset_id == asset_id,
+                MarketData.date < today
+            ).order_by(MarketData.date.desc()).first()
+            
+            if latest_data:
+                # 使用最近交易日的数据作为临时值
+                print(f"[市场数据] [今日实时覆盖] 使用最近交易日 {latest_data.date} 的数据作为临时值 (is_temporary=True)")
+                
+                existing_today = db.query(MarketData).filter(
+                    MarketData.asset_id == asset_id,
+                    MarketData.date == today
+                ).first()
+                
+                if existing_today:
+                    # 更新现有记录为临时数据
+                    existing_today.close_price = latest_data.close_price
+                    existing_today.volume = latest_data.volume
+                    existing_today.turnover_rate = latest_data.turnover_rate
+                    existing_today.pe_ratio = latest_data.pe_ratio
+                    existing_today.pb_ratio = latest_data.pb_ratio
+                    existing_today.market_cap = latest_data.market_cap
+                    existing_today.eps_forecast = latest_data.eps_forecast
+                    print(f"[市场数据] [今日实时覆盖] 更新今日记录为临时数据 (is_temporary=True): 价格={latest_data.close_price}")
+                else:
+                    # 创建临时记录
+                    market_data = MarketData(
+                        asset_id=asset_id,
+                        date=today,
+                        close_price=latest_data.close_price,
+                        volume=latest_data.volume,
+                        turnover_rate=latest_data.turnover_rate,
+                        pe_ratio=latest_data.pe_ratio,
+                        pb_ratio=latest_data.pb_ratio,
+                        market_cap=latest_data.market_cap,
+                        eps_forecast=latest_data.eps_forecast,
+                        additional_data=latest_data.additional_data
+                    )
+                    db.add(market_data)
+                    new_data_count += 1
+                    print(f"[市场数据] [今日实时覆盖] 创建今日临时记录 (is_temporary=True): 价格={latest_data.close_price}")
+                
+                today_is_temporary = True
+                today_updated = True
+            else:
+                print(f"[市场数据] [今日实时覆盖] 警告: 数据库中无历史数据可回溯")
+    except Exception as e:
+        print(f"[市场数据] [今日实时覆盖] 处理今日数据时发生异常: {type(e).__name__}: {str(e)}")
+        traceback.print_exc()
+    
+    # 更新基准财务指标（如果今日数据获取成功）
+    if today_updated and not today_is_temporary:
+        try:
+            today_record = db.query(MarketData).filter(
+                MarketData.asset_id == asset_id,
+                MarketData.date == today
+            ).first()
+            if today_record and today_record.pe_ratio and today_record.pe_ratio != 0:
+                ref_pe = today_record.pe_ratio
+                ref_pb = today_record.pb_ratio if today_record.pb_ratio else None
+                ref_market_cap = today_record.market_cap if today_record.market_cap and today_record.market_cap > 0 else None
+                ref_eps = today_record.eps_forecast if today_record.eps_forecast else None
+                ref_price = today_record.close_price
+                ref_date = today_record.date
+                print(f"[市场数据] [今日实时覆盖] 更新基准财务指标: PE={ref_pe}, PB={ref_pb}, 市值={ref_market_cap}")
+        except Exception as e:
+            print(f"[市场数据] [今日实时覆盖] 更新基准财务指标时发生异常: {str(e)}")
+    
+    # ========== 第二步：处理"历史"数据（按需补全） ==========
+    print(f"[市场数据] ========== 【历史缺失补全】开始处理历史数据 ==========")
+    
+    # 遍历日期范围内的每一天（不包括今日，今日已在上面处理）
     current_date = baseline_date_obj
-    while current_date <= today:
+    while current_date < today:  # 注意：使用 < 而不是 <=
         # 跳过周末（非交易日）
         if current_date.weekday() >= 5:  # 5=Saturday, 6=Sunday
             current_date += timedelta(days=1)
@@ -1391,7 +1527,7 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
             ).first()
             
             if existing_record:
-                # 检查数据是否完整
+                # 检查数据是否完整（核心指标：close_price 和 pe_ratio 等）
                 has_price = existing_record.close_price is not None
                 has_metrics = (
                     (existing_record.pe_ratio is not None and existing_record.pe_ratio != 0) or
@@ -1400,10 +1536,10 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
                 )
                 
                 if has_price and has_metrics:
-                    # 数据完整，跳过
+                    # 数据完整，跳过（优先查库）
                     skipped_count += 1
-                    if skipped_count % 10 == 0:
-                        print(f"[市场数据] 已跳过 {skipped_count} 条完整记录...")
+                    if skipped_count % 50 == 0:
+                        print(f"[市场数据] [历史缺失补全] 已跳过 {skipped_count} 条完整记录...")
                 elif has_price and not has_metrics:
                     # 有价格但缺少财务指标，需要补全
                     if ref_pe and ref_price and ref_price > 0:
@@ -1423,13 +1559,66 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
                         pe_str = f"{existing_record.pe_ratio:.2f}" if existing_record.pe_ratio is not None else "N/A"
                         pb_str = f"{existing_record.pb_ratio:.2f}" if existing_record.pb_ratio is not None else "N/A"
                         market_cap_str = f"{existing_record.market_cap:.2f}" if existing_record.market_cap is not None else "N/A"
-                        print(f"[市场数据] 补全财务指标 (日期: {current_date}): PE={pe_str}, PB={pb_str}, 市值={market_cap_str}")
+                        print(f"[市场数据] [历史缺失补全] 补全财务指标 (日期: {current_date}): PE={pe_str}, PB={pb_str}, 市值={market_cap_str}")
                     else:
-                        print(f"[市场数据] 警告: 日期 {current_date} 缺少财务指标，但无基准数据可反推")
+                        print(f"[市场数据] [历史缺失补全] 警告: 日期 {current_date} 缺少财务指标，但无基准数据可反推")
+                else:
+                    # 价格也为空，需要获取数据
+                    print(f"[市场数据] [历史缺失补全] 日期 {current_date} 数据不完整，发起 API 请求...")
+                    try:
+                        hist_data_list = fetch_asset_data(
+                            code=asset.code,
+                            asset_type=asset.asset_type,
+                            start_date=current_date.isoformat(),
+                            end_date=current_date.isoformat(),
+                            db=db
+                        )
+                        
+                        if hist_data_list and len(hist_data_list) > 0:
+                            hist_data = hist_data_list[0]
+                            hist_price = hist_data.get("close_price")
+                            
+                            if hist_price:
+                                # 更新现有记录
+                                existing_record.close_price = hist_price
+                                existing_record.volume = hist_data.get("volume")
+                                existing_record.turnover_rate = hist_data.get("turnover_rate")
+                                
+                                # 如果 API 返回了财务指标，使用 API 的值；否则反推
+                                if hist_data.get("pe_ratio") is not None:
+                                    existing_record.pe_ratio = hist_data.get("pe_ratio")
+                                elif ref_pe and ref_price and ref_price > 0:
+                                    price_ratio = hist_price / ref_price
+                                    existing_record.pe_ratio = ref_pe * price_ratio
+                                
+                                if hist_data.get("pb_ratio") is not None:
+                                    existing_record.pb_ratio = hist_data.get("pb_ratio")
+                                elif ref_pb and ref_price and ref_price > 0:
+                                    price_ratio = hist_price / ref_price
+                                    existing_record.pb_ratio = ref_pb * price_ratio
+                                
+                                if hist_data.get("market_cap") is not None and hist_data.get("market_cap") > 0:
+                                    existing_record.market_cap = hist_data.get("market_cap")
+                                elif ref_market_cap and ref_price and ref_price > 0:
+                                    price_ratio = hist_price / ref_price
+                                    existing_record.market_cap = ref_market_cap * price_ratio
+                                
+                                if hist_data.get("eps_forecast") is not None:
+                                    existing_record.eps_forecast = hist_data.get("eps_forecast")
+                                elif ref_eps:
+                                    existing_record.eps_forecast = ref_eps
+                                
+                                if hist_data.get("additional_data"):
+                                    existing_record.additional_data = json.dumps(hist_data.get("additional_data", {}), ensure_ascii=False)
+                                
+                                filled_metrics_count += 1
+                                print(f"[市场数据] [历史缺失补全] 更新记录 (日期: {current_date}): 价格={hist_price}")
+                    except Exception as e:
+                        print(f"[市场数据] [历史缺失补全] 获取日期 {current_date} 数据失败: {type(e).__name__}")
             else:
-                # 记录不存在，需要获取历史价格并补全财务指标
+                # 记录不存在，需要获取历史价格并补全财务指标（按需补全）
+                print(f"[市场数据] [历史缺失补全] 日期 {current_date} 记录不存在，发起 API 请求...")
                 try:
-                    # 获取该日期的历史价格
                     hist_data_list = fetch_asset_data(
                         code=asset.code,
                         asset_type=asset.asset_type,
@@ -1457,36 +1646,41 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
                                 additional_data=json.dumps(hist_data.get("additional_data", {}), ensure_ascii=False) if hist_data.get("additional_data") else None
                             )
                             
-                            # 如果有基准财务指标，按比例反推
-                            if ref_pe and ref_price and ref_price > 0:
+                            # 如果 API 返回了财务指标，使用 API 的值；否则反推
+                            if hist_data.get("pe_ratio") is not None:
+                                market_data.pe_ratio = hist_data.get("pe_ratio")
+                            elif ref_pe and ref_price and ref_price > 0:
                                 price_ratio = hist_price / ref_price
                                 market_data.pe_ratio = ref_pe * price_ratio
-                                if ref_pb:
-                                    market_data.pb_ratio = ref_pb * price_ratio
-                                if ref_market_cap:
-                                    market_data.market_cap = ref_market_cap * price_ratio
-                                if ref_eps:
-                                    market_data.eps_forecast = ref_eps
-                                
-                                pe_str = f"{market_data.pe_ratio:.2f}" if market_data.pe_ratio is not None else "N/A"
-                                print(f"[市场数据] 新增记录并补全指标 (日期: {current_date}): 价格={hist_price}, PE={pe_str}")
-                            else:
-                                print(f"[市场数据] 新增记录 (日期: {current_date}): 价格={hist_price} (无基准指标)")
+                            
+                            if hist_data.get("pb_ratio") is not None:
+                                market_data.pb_ratio = hist_data.get("pb_ratio")
+                            elif ref_pb and ref_price and ref_price > 0:
+                                price_ratio = hist_price / ref_price
+                                market_data.pb_ratio = ref_pb * price_ratio
+                            
+                            if hist_data.get("market_cap") is not None and hist_data.get("market_cap") > 0:
+                                market_data.market_cap = hist_data.get("market_cap")
+                            elif ref_market_cap and ref_price and ref_price > 0:
+                                price_ratio = hist_price / ref_price
+                                market_data.market_cap = ref_market_cap * price_ratio
+                            
+                            if hist_data.get("eps_forecast") is not None:
+                                market_data.eps_forecast = hist_data.get("eps_forecast")
+                            elif ref_eps:
+                                market_data.eps_forecast = ref_eps
+                            
+                            pe_str = f"{market_data.pe_ratio:.2f}" if market_data.pe_ratio is not None else "N/A"
+                            print(f"[市场数据] [历史缺失补全] 新增记录 (日期: {current_date}): 价格={hist_price}, PE={pe_str}")
                             
                             db.add(market_data)
                             new_data_count += 1
-                        else:
-                            # 静默跳过：该日期无交易数据
-                            pass
-                    else:
-                        # 静默跳过：数据源返回空，可能是非交易日
-                        pass
                 except Exception as e:
-                    # 静默处理异常，只记录日志，不抛出
-                    print(f"[市场数据] [跳过] 日期 {current_date} 无交易数据: {type(e).__name__}")
+                    # 静默处理异常，只记录日志
+                    print(f"[市场数据] [历史缺失补全] 获取日期 {current_date} 数据失败: {type(e).__name__}")
         except Exception as e:
             # 单个日期处理失败不应该导致整个资产更新失败
-            print(f"[市场数据] 警告: 处理日期 {current_date} 时发生异常: {type(e).__name__}: {str(e)}")
+            print(f"[市场数据] [历史缺失补全] 警告: 处理日期 {current_date} 时发生异常: {type(e).__name__}: {str(e)}")
             traceback.print_exc()
         
         # 移动到下一天
@@ -1498,24 +1692,32 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
         total_count = new_data_count + filled_metrics_count
         
         # 构建返回消息
-        if new_data_count > 0 and filled_metrics_count > 0:
-            message = f"成功抓取了 {new_data_count} 条新数据，补全了 {filled_metrics_count} 条历史缺失指标"
-        elif new_data_count > 0:
-            message = f"成功抓取了 {new_data_count} 条新数据"
-        elif filled_metrics_count > 0:
-            message = f"补全了 {filled_metrics_count} 条历史缺失指标"
-        else:
-            message = f"数据已完整，无需更新（跳过了 {skipped_count} 条完整记录）"
+        message_parts = []
+        if today_updated:
+            if today_is_temporary:
+                message_parts.append(f"今日数据已更新（临时数据，等待真实价格）")
+            else:
+                message_parts.append(f"今日数据已实时覆盖")
+        if new_data_count > 0:
+            message_parts.append(f"新增 {new_data_count} 条历史数据")
+        if filled_metrics_count > 0:
+            message_parts.append(f"补全 {filled_metrics_count} 条历史缺失指标")
+        if skipped_count > 0 and not message_parts:
+            message_parts.append(f"数据已完整，无需更新（跳过了 {skipped_count} 条完整记录）")
+        
+        message = "；".join(message_parts) if message_parts else "无数据更新"
         
         print(f"[市场数据] ========== 资产数据更新完成 (asset_id={asset_id}) ==========")
-        print(f"[市场数据] 统计: 新增={new_data_count}, 补全指标={filled_metrics_count}, 跳过={skipped_count}, 总计={total_count}")
+        print(f"[市场数据] 统计: 今日更新={'是' if today_updated else '否'}, 今日临时={'是' if today_is_temporary else '否'}, 新增={new_data_count}, 补全指标={filled_metrics_count}, 跳过={skipped_count}, 总计={total_count}")
         
         return {
             "success": True,
             "message": message,
             "stored_count": total_count,
             "new_data_count": new_data_count,
-            "filled_metrics_count": filled_metrics_count
+            "filled_metrics_count": filled_metrics_count,
+            "today_updated": today_updated,
+            "today_is_temporary": today_is_temporary
         }
     except Exception as e:
         print(f"[市场数据] 错误: 提交数据时发生异常: {type(e).__name__}: {str(e)}")
@@ -1526,7 +1728,9 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
             "message": f"更新失败: {str(e)}",
             "stored_count": 0,
             "new_data_count": 0,
-            "filled_metrics_count": 0
+            "filled_metrics_count": 0,
+            "today_updated": False,
+            "today_is_temporary": False
         }
 
 
