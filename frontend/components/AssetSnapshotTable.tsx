@@ -29,7 +29,7 @@ interface SnapshotData {
   baseline_pe_ratio: number | null
 }
 
-type SortField = "baseline_price" | "latest_close_price" | "market_cap" | "eps_forecast" | "change_rate" | "daily_change_rate" | "valuation_expansion" | null
+type SortField = "baseline_price" | "latest_close_price" | "market_cap" | "eps_forecast" | "change_rate" | "daily_change_rate" | null
 type SortDirection = "asc" | "desc"
 
 export function AssetSnapshotTable({ className }: { className?: string }) {
@@ -93,16 +93,6 @@ export function AssetSnapshotTable({ className }: { className?: string }) {
     } else if (sortField === "daily_change_rate") {
       aValue = a.daily_change_rate
       bValue = b.daily_change_rate
-    } else if (sortField === "valuation_expansion") {
-      // 计算估值扩张：(今日PE / 1月5日PE - 1) * 100%
-      const aValuationExpansion = a.pe_ratio && a.baseline_pe_ratio && a.baseline_pe_ratio > 0 
-        ? ((a.pe_ratio / a.baseline_pe_ratio - 1) * 100) 
-        : null
-      const bValuationExpansion = b.pe_ratio && b.baseline_pe_ratio && b.baseline_pe_ratio > 0 
-        ? ((b.pe_ratio / b.baseline_pe_ratio - 1) * 100) 
-        : null
-      aValue = aValuationExpansion
-      bValue = bValuationExpansion
     }
 
     // 处理 null 值
@@ -142,17 +132,6 @@ export function AssetSnapshotTable({ className }: { className?: string }) {
   const formatMarketCap = (value: number | null | undefined): string => {
     if (value === null || value === undefined) return "--"
     return `${value.toFixed(2)} 亿元`
-  }
-
-  // 计算估值扩张并格式化
-  const calculateValuationExpansion = (peRatio: number | null, baselinePeRatio: number | null): { value: number | null; color: string } => {
-    if (peRatio === null || baselinePeRatio === null || baselinePeRatio <= 0) {
-      return { value: null, color: "" }
-    }
-    const expansion = ((peRatio / baselinePeRatio - 1) * 100)
-    // 正数且很大用红色，负数用绿色
-    const color = expansion > 0 ? "text-red-600" : "text-green-600"
-    return { value: expansion, color }
   }
 
   return (
@@ -220,15 +199,6 @@ export function AssetSnapshotTable({ className }: { className?: string }) {
                 <span className="ml-1">{sortDirection === "asc" ? "↑" : "↓"}</span>
               )}
             </th>
-            <th
-              className="border p-2 text-left font-bold cursor-pointer hover:bg-gray-200"
-              onClick={() => handleSort("valuation_expansion")}
-            >
-              估值扩张
-              {sortField === "valuation_expansion" && (
-                <span className="ml-1">{sortDirection === "asc" ? "↑" : "↓"}</span>
-              )}
-            </th>
           </tr>
         </thead>
         <tbody>
@@ -236,8 +206,8 @@ export function AssetSnapshotTable({ className }: { className?: string }) {
             // 累计收益颜色：正数或0为红色，负数为绿色
             const changeRateColor = item.change_rate !== null && item.change_rate < 0 ? "text-green-600" : "text-red-600"
             
-            // 计算估值扩张
-            const valuationExpansion = calculateValuationExpansion(item.pe_ratio, item.baseline_pe_ratio)
+            // 涨跌幅颜色：正数为红色，负数为绿色
+            const dailyChangeRateColor = item.daily_change_rate !== null && item.daily_change_rate < 0 ? "text-green-600" : "text-red-600"
             
             return (
               <tr key={item.asset_id} className="hover:bg-gray-50">
@@ -264,7 +234,7 @@ export function AssetSnapshotTable({ className }: { className?: string }) {
                 <td className="border p-2">
                   {formatNumber(item.latest_close_price)}
                 </td>
-                <td className="border p-2">
+                <td className={`border p-2 ${dailyChangeRateColor}`}>
                   {item.daily_change_rate !== null ? formatPercent(item.daily_change_rate) : "--"}
                 </td>
                 <td className="border p-2">
@@ -275,9 +245,6 @@ export function AssetSnapshotTable({ className }: { className?: string }) {
                 </td>
                 <td className={`border p-2 ${changeRateColor}`}>
                   {formatPercent(item.change_rate)}
-                </td>
-                <td className={`border p-2 ${valuationExpansion.color}`}>
-                  {valuationExpansion.value !== null ? formatPercent(valuationExpansion.value) : "--"}
                 </td>
               </tr>
             )
