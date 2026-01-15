@@ -745,6 +745,11 @@ async def get_all_assets_chart_data(
                 "name": asset.name,
                 "baseline_price": baseline_price,
                 "baseline_date": asset.baseline_date.isoformat() if asset.baseline_date else None,
+                "user": {
+                    "id": asset.user.id,
+                    "name": asset.user.name,
+                    "avatar_url": normalize_avatar_url(asset.user.avatar_url) if asset.user.avatar_url else None
+                },
                 "data": data_points
             })
     

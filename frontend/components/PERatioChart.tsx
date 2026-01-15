@@ -14,6 +14,8 @@ import {
 import { dataAPI } from "@/lib/api"
 import { formatNumber } from "@/lib/utils"
 import { cn } from "@/lib/utils"
+import { UserAvatar } from "@/components/UserAvatar"
+import { type User } from "@/types"
 
 interface PERatioChartProps {
   className?: string
@@ -38,6 +40,11 @@ interface AssetChartData {
   name: string
   baseline_price?: number
   baseline_date?: string
+  user?: {
+    id: number
+    name: string
+    avatar_url?: string | null
+  }
   data: DataPoint[]
 }
 
@@ -266,6 +273,36 @@ export function PERatioChart({
             <Legend 
               onClick={handleLegendClick}
               wrapperStyle={{ cursor: 'pointer' }}
+              content={(props) => {
+                const { payload } = props
+                if (!payload || !Array.isArray(payload)) return null
+                
+                return (
+                  <div className="flex flex-wrap items-center justify-center gap-4 mt-4">
+                    {payload.map((entry: any, index: number) => {
+                      const asset = assets.find((a: AssetChartData) => a.code === entry.dataKey)
+                      const user = asset?.user
+                      
+                      return (
+                        <div
+                          key={`legend-${index}`}
+                          onClick={() => handleLegendClick({ dataKey: entry.dataKey })}
+                          className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
+                          style={{ color: entry.color }}
+                        >
+                          {user && (
+                            <UserAvatar
+                              user={user as User}
+                              size="sm"
+                            />
+                          )}
+                          <span className="text-sm font-medium">{entry.dataKey}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )
+              }}
             />
             {assets.map((asset: AssetChartData, index: number) => {
               const isSelected = selectedAssetCode === null || selectedAssetCode === asset.code
