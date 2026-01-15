@@ -13,7 +13,7 @@ import traceback
 
 from database.config import get_db
 from database.models import User, Asset, MarketData, Ranking
-from services.market_data import update_asset_data, update_all_assets_data, get_latest_trading_date
+from services.market_data import update_asset_data, update_all_assets_data, get_latest_trading_date, calculate_stability_metrics
 from services.ranking import save_rankings, get_or_set_baseline_price
 from services.storage import upload_avatar_file, delete_avatar, normalize_avatar_url
 from config import MAX_UPLOAD_SIZE, ALLOWED_EXTENSIONS, BASELINE_DATE
@@ -114,6 +114,9 @@ class MarketDataResponse(BaseModel):
     pb_ratio: Optional[float]
     market_cap: Optional[float]
     eps_forecast: Optional[float]
+    stability_score: Optional[float]
+    annual_volatility: Optional[float]
+    daily_returns: Optional[List[float]]
     additional_data: Optional[dict]
     created_at: str
 
@@ -830,6 +833,10 @@ async def get_snapshot_data(db: Session = Depends(get_db)):
         if latest_data:
             print(f"[API] Snapshot财务指标 (资产: {asset.code}): PE={pe_ratio}, PB={pb_ratio}, 市值={market_cap}, EPS={eps_forecast}")
         
+        # 计算稳健度指标
+        stability_metrics = calculate_stability_metrics(asset.id, db)
+        print(f"[API] Snapshot稳健度指标 (资产: {asset.code}): 稳健性评分={stability_metrics['stability_score']}, 年化波动率={stability_metrics['annual_volatility']}%, 收益率数据数量={len(stability_metrics['daily_returns'])}")
+        
         result.append({
             "asset_id": asset.id,
             "code": asset.code,
@@ -851,6 +858,9 @@ async def get_snapshot_data(db: Session = Depends(get_db)):
             "pe_ratio": pe_ratio,
             "pb_ratio": pb_ratio,
             "baseline_pe_ratio": baseline_pe_ratio,
+            "stability_score": stability_metrics["stability_score"],
+            "annual_volatility": stability_metrics["annual_volatility"],
+            "daily_returns": stability_metrics["daily_returns"],
         })
     
     return result

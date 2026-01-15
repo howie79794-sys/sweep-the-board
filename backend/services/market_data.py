@@ -2,6 +2,7 @@
 专门存放调用外部接口（如 yfinance）获取市场数据的逻辑
 """
 import pandas as pd
+import numpy as np
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional, Dict, List
 import json
@@ -1790,3 +1791,84 @@ def update_all_assets_data(db: Session, force: bool = False) -> Dict:
     
     print(f"[市场数据] ========== 批量更新完成: 总计={results['total']}, 成功={results['success']}, 失败={results['failed']} ==========")
     return results
+
+
+def calculate_stability_metrics(asset_id: int, db: Session) -> Dict:
+    """
+    计算资产稳健度指标
+    
+    Args:
+        asset_id: 资产ID
+        db: 数据库会话
+    
+    Returns:
+        dict: {
+            "stability_score": float,  # 稳健性评分 (0-100)
+            "annual_volatility": float,  # 年化波动率 (%)
+            "daily_returns": List[float]  # 最近20个交易日的每日收益率 (%)
+        }
+    """
+    print(f"[市场数据] [稳健度计算] 开始计算资产 {asset_id} 的稳健度指标")
+    
+    try:
+        # 获取从基准日期（2026-01-05）到今天的所有市场数据
+        baseline_date_obj = date.fromisoformat(BASELINE_DATE) if isinstance(BASELINE_DATE, str) else BASELINE_DATE
+        today = get_beijing_time().date()
+        
+        print(f"[市场数据] [稳健度计算] 查询日期范围: {baseline_date_obj} 至 {today}")
+        
+        # 查询市场数据，按日期升序排列
+        market_data_list = db.query(MarketData).filter(
+            MarketData.asset_id == asset_id,
+            MarketData.date >= baseline_date_obj,
+            MarketData.date <= today
+        ).order_by(MarketData.date.asc()).all()
+        
+        if not market_data_list or len(market_data_list) < 2:
+            print(f"[市场数据] [稳健度计算] 数据不足，无法计算稳健度 (数据条数: {len(market_data_list)})")
+            return {
+                "stability_score": None,
+                "annual_volatility": None,
+                "daily_returns": []
+            }
+        
+        print(f"[市场数据] [稳健度计算] 找到 {len(market_data_list)} 条数据")
+        
+        # 提取收盘价
+        prices = np.array([md.close_price for md in market_data_list])
+        
+        # 计算每日对数收益率: r_t = ln(P_t / P_{t-1})
+        log_returns = np.diff(np.log(prices))
+        
+        # 计算年化波动率: σ_annual = std(r) × sqrt(252)
+        # 252 是A股每年的交易日数
+        annual_volatility = float(np.std(log_returns, ddof=1) * np.sqrt(252) * 100)  # 转换为百分比
+        
+        # 计算稳健性评分: stability_score = max(0, 100 * (1 - σ_annual))
+        # 注意：σ_annual 已经是百分比，所以需要除以100
+        stability_score = float(max(0, 100 * (1 - annual_volatility / 100)))
+        
+        # 获取最近20个交易日的每日收益率（转换为百分比）
+        # 使用简单收益率而不是对数收益率，更直观
+        daily_returns_pct = []
+        for i in range(max(0, len(prices) - 20), len(prices)):
+            if i > 0:
+                simple_return = (prices[i] - prices[i-1]) / prices[i-1] * 100
+                daily_returns_pct.append(float(simple_return))
+        
+        print(f"[市场数据] [稳健度计算] 计算完成: 年化波动率={annual_volatility:.2f}%, 稳健性评分={stability_score:.2f}, 最近20日收益率数量={len(daily_returns_pct)}")
+        
+        return {
+            "stability_score": round(stability_score, 2),
+            "annual_volatility": round(annual_volatility, 2),
+            "daily_returns": [round(r, 2) for r in daily_returns_pct]
+        }
+        
+    except Exception as e:
+        print(f"[市场数据] [稳健度计算] 计算失败: {type(e).__name__}: {str(e)}")
+        traceback.print_exc()
+        return {
+            "stability_score": None,
+            "annual_volatility": None,
+            "daily_returns": []
+        }

@@ -33,6 +33,9 @@ export interface MarketData {
   turnover_rate?: number;
   pe_ratio?: number;
   market_cap?: number;
+  stability_score?: number;
+  annual_volatility?: number;
+  daily_returns?: number[];
   additional_data?: Record<string, any>;
   created_at: string;
 }

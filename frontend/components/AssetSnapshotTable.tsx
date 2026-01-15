@@ -5,6 +5,7 @@ import { dataAPI } from "@/lib/api"
 import { formatPercent, formatNumber } from "@/lib/utils"
 import { cn } from "@/lib/utils"
 import { UserAvatar } from "@/components/UserAvatar"
+import { StabilityTooltip } from "@/components/StabilityTooltip"
 
 interface SnapshotData {
   asset_id: number
@@ -27,9 +28,12 @@ interface SnapshotData {
   pe_ratio: number | null
   pb_ratio: number | null
   baseline_pe_ratio: number | null
+  stability_score: number | null
+  annual_volatility: number | null
+  daily_returns: number[] | null
 }
 
-type SortField = "baseline_price" | "latest_close_price" | "market_cap" | "eps_forecast" | "change_rate" | "daily_change_rate" | null
+type SortField = "baseline_price" | "latest_close_price" | "market_cap" | "eps_forecast" | "change_rate" | "daily_change_rate" | "stability_score" | null
 type SortDirection = "asc" | "desc"
 
 export function AssetSnapshotTable({ className }: { className?: string }) {
@@ -93,6 +97,9 @@ export function AssetSnapshotTable({ className }: { className?: string }) {
     } else if (sortField === "daily_change_rate") {
       aValue = a.daily_change_rate
       bValue = b.daily_change_rate
+    } else if (sortField === "stability_score") {
+      aValue = a.stability_score
+      bValue = b.stability_score
     }
 
     // 处理 null 值
@@ -199,6 +206,15 @@ export function AssetSnapshotTable({ className }: { className?: string }) {
                 <span className="ml-1">{sortDirection === "asc" ? "↑" : "↓"}</span>
               )}
             </th>
+            <th
+              className="border p-2 text-left font-bold cursor-pointer hover:bg-gray-200"
+              onClick={() => handleSort("stability_score")}
+            >
+              稳健度
+              {sortField === "stability_score" && (
+                <span className="ml-1">{sortDirection === "asc" ? "↑" : "↓"}</span>
+              )}
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -208,6 +224,14 @@ export function AssetSnapshotTable({ className }: { className?: string }) {
             
             // 涨跌幅颜色：正数为红色，负数为绿色
             const dailyChangeRateColor = item.daily_change_rate !== null && item.daily_change_rate < 0 ? "text-green-600" : "text-red-600"
+            
+            // 稳健度颜色：>80分绿色，60-80分黄色，<60分红色
+            const stabilityColor = 
+              item.stability_score !== null && item.stability_score > 80 
+                ? "text-green-600" 
+                : item.stability_score !== null && item.stability_score >= 60 
+                ? "text-yellow-600" 
+                : "text-red-600"
             
             return (
               <tr key={item.asset_id} className="hover:bg-gray-50">
@@ -245,6 +269,13 @@ export function AssetSnapshotTable({ className }: { className?: string }) {
                 </td>
                 <td className={`border p-2 ${changeRateColor}`}>
                   {formatPercent(item.change_rate)}
+                </td>
+                <td className={`border p-2 ${stabilityColor}`}>
+                  <StabilityTooltip
+                    stabilityScore={item.stability_score}
+                    annualVolatility={item.annual_volatility}
+                    dailyReturns={item.daily_returns || []}
+                  />
                 </td>
               </tr>
             )
