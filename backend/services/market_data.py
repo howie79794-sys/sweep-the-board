@@ -9,6 +9,7 @@ import json
 import time
 import random
 import traceback
+import re
 
 from sqlalchemy.orm import Session
 from database.models import Asset, MarketData
@@ -102,6 +103,14 @@ except ImportError:
     YFINANCE_AVAILABLE = False
     print("[市场数据] 警告: yfinance 未安装")
 
+# 尝试导入 akshare
+try:
+    import akshare as ak
+    AKSHARE_AVAILABLE = True
+except ImportError:
+    AKSHARE_AVAILABLE = False
+    print("[市场数据] 警告: akshare 未安装")
+
 # 尝试导入 baostock
 try:
     import baostock as bs
@@ -109,6 +118,11 @@ try:
 except ImportError:
     BAOSTOCK_AVAILABLE = False
     print("[市场数据] 警告: baostock 未安装")
+
+
+class YFinanceRateLimitError(RuntimeError):
+    """yfinance 触发频率限制时抛出的异常。"""
+    pass
 
 
 def normalize_stock_code(code: str) -> str:
@@ -149,44 +163,73 @@ def convert_to_yfinance_symbol(code: str) -> str:
         return f"{clean_code}.SS"
 
 
-def format_date_for_baostock(date_input) -> str:
+def normalize_date_str(date_input) -> str:
     """
-    格式化日期为 baostock 需要的 YYYYMMDD 格式（8位数字，无分隔符）
+    将日期标准化为 YYYY-MM-DD 格式字符串
     
     Args:
         date_input: 日期输入，可以是 date 对象或字符串
     
     Returns:
-        str: YYYYMMDD 格式的日期字符串（8位数字）
+        str: YYYY-MM-DD 格式的日期字符串
     
     Raises:
         ValueError: 如果无法解析日期格式
     """
+    if isinstance(date_input, datetime):
+        return date_input.date().strftime('%Y-%m-%d')
     if isinstance(date_input, date):
-        return date_input.strftime('%Y%m%d')
+        return date_input.strftime('%Y-%m-%d')
     elif isinstance(date_input, str):
-        # 去除所有空格、分隔符和特殊字符
-        cleaned = date_input.replace("-", "").replace("/", "").replace(" ", "").replace("_", "").strip()
-        # 验证是否为8位数字
-        if len(cleaned) == 8 and cleaned.isdigit():
-            return cleaned
-        else:
-            # 尝试解析为标准格式
-            try:
-                # 尝试多种日期格式
-                for fmt in ['%Y-%m-%d', '%Y/%m/%d', '%Y%m%d']:
-                    try:
-                        date_obj = datetime.strptime(date_input.strip(), fmt).date()
-                        return date_obj.strftime('%Y%m%d')
-                    except ValueError:
-                        continue
-                # 如果都失败，尝试使用 fromisoformat
-                date_obj = date.fromisoformat(date_input.replace("/", "-").strip())
-                return date_obj.strftime('%Y%m%d')
-            except Exception as e:
-                raise ValueError(f"无法解析日期格式: {date_input} (错误: {str(e)})")
+        cleaned = date_input.strip()
+        try:
+            for fmt in ['%Y-%m-%d', '%Y/%m/%d', '%Y%m%d']:
+                try:
+                    date_obj = datetime.strptime(cleaned, fmt).date()
+                    return date_obj.strftime('%Y-%m-%d')
+                except ValueError:
+                    continue
+            if re.fullmatch(r"\d{8}", cleaned):
+                date_obj = datetime.strptime(cleaned, "%Y%m%d").date()
+                return date_obj.strftime('%Y-%m-%d')
+            date_obj = date.fromisoformat(cleaned.replace("/", "-"))
+            return date_obj.strftime('%Y-%m-%d')
+        except Exception as e:
+            raise ValueError(f"无法解析日期格式: {date_input} (错误: {str(e)})")
     else:
         raise ValueError(f"不支持的日期类型: {type(date_input)}")
+
+
+def format_date_for_baostock(date_input) -> str:
+    """
+    兼容旧调用：保持 YYYY-MM-DD 格式，避免错误转成 20260103
+    """
+    return normalize_date_str(date_input)
+
+
+def is_a_share_code(code: str) -> bool:
+    code_upper = code.upper().strip()
+    return code_upper.startswith("SH.") or code_upper.startswith("SZ.")
+
+
+def is_futures_main_code(code: str) -> bool:
+    return code.upper().strip().startswith("CF.")
+
+
+def is_domestic_code(code: str) -> bool:
+    return is_a_share_code(code) or is_futures_main_code(code)
+
+
+def is_yfinance_rate_limit_error(error: Exception) -> bool:
+    error_name = type(error).__name__
+    error_msg = str(error).lower()
+    return (
+        "ratelimit" in error_msg
+        or "too many requests" in error_msg
+        or "429" in error_msg
+        or "rate limit" in error_msg
+        or "YFRateLimitError".lower() in error_name.lower()
+    )
 
 
 def fetch_financial_indicators_yfinance(ticker: yf.Ticker) -> Dict[str, float]:
@@ -399,6 +442,203 @@ def fetch_realtime_price_yfinance(code: str) -> Optional[pd.DataFrame]:
         return None
 
 
+def standardize_market_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    expected_cols = ['date', 'open', 'close', 'high', 'low', 'volume', 'turnover', 'amplitude', 'change_pct', 'change_amount', 'turnover_rate']
+    for col in expected_cols:
+        if col not in df.columns:
+            df[col] = None
+    return df
+
+
+def fetch_stock_data_akshare(code: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
+    """
+    使用 AkShare 获取 A 股历史数据
+    """
+    if not AKSHARE_AVAILABLE:
+        print("[市场数据] [akshare] 不可用")
+        return None
+    if not is_a_share_code(code):
+        return None
+
+    start_date = normalize_date_str(start_date)
+    end_date = normalize_date_str(end_date)
+    symbol = normalize_stock_code(code)
+
+    try:
+        print(f"[市场数据] [akshare] 获取A股数据: symbol={symbol}, start_date={start_date}, end_date={end_date}")
+        df = ak.stock_zh_a_hist(symbol=symbol, start_date=start_date, end_date=end_date, adjust="qfq")
+    except Exception as e:
+        print(f"[市场数据] [akshare] 获取A股数据失败: {type(e).__name__}: {str(e)}")
+        return None
+
+    if df is None or df.empty:
+        print("[市场数据] [akshare] A股数据为空")
+        return None
+
+    column_mapping = {
+        '日期': 'date',
+        '开盘': 'open',
+        '收盘': 'close',
+        '最高': 'high',
+        '最低': 'low',
+        '成交量': 'volume',
+        '成交额': 'turnover',
+        '涨跌幅': 'change_pct',
+        '涨跌额': 'change_amount',
+        '换手率': 'turnover_rate'
+    }
+    df = df.rename(columns={k: v for k, v in column_mapping.items() if k in df.columns})
+
+    if 'date' in df.columns:
+        df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
+
+    numeric_cols = ['open', 'close', 'high', 'low', 'volume', 'turnover', 'change_pct', 'change_amount', 'turnover_rate']
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    df = standardize_market_dataframe(df)
+    print(f"[市场数据] [akshare] 成功获取 {len(df)} 条A股数据")
+    return df
+
+
+def resolve_futures_main_contract(code: str) -> Optional[str]:
+    if not AKSHARE_AVAILABLE:
+        return None
+
+    symbol = code.upper().replace("CF.", "").strip()
+    symbol_no0 = symbol[:-1] if symbol.endswith("0") else symbol
+
+    for candidate in [symbol, symbol_no0]:
+        if not candidate:
+            continue
+        try:
+            df = ak.futures_main_relation(symbol=candidate)
+        except Exception as e:
+            print(f"[市场数据] [akshare] 获取主力合约关系失败: {type(e).__name__}: {str(e)}")
+            continue
+
+        if df is None or df.empty:
+            continue
+
+        # 尝试多种字段命名
+        for col in ['main_contract', '主力合约', '主力合约代码', '合约代码', 'symbol']:
+            if col in df.columns:
+                if 'symbol' in df.columns and col != 'symbol':
+                    matched = df[df['symbol'].astype(str).str.upper() == candidate]
+                    if not matched.empty:
+                        return str(matched.iloc[0][col])
+                return str(df.iloc[0][col])
+    return None
+
+
+def fetch_futures_data_akshare(code: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
+    """
+    使用 AkShare 获取股指期货主力合约历史数据
+    """
+    if not AKSHARE_AVAILABLE:
+        print("[市场数据] [akshare] 不可用")
+        return None
+    if not is_futures_main_code(code):
+        return None
+
+    start_date = normalize_date_str(start_date)
+    end_date = normalize_date_str(end_date)
+
+    main_contract = resolve_futures_main_contract(code)
+    if not main_contract:
+        print(f"[市场数据] [akshare] 未找到主力合约: code={code}")
+        return None
+
+    try:
+        print(f"[市场数据] [akshare] 获取期货数据: main_contract={main_contract}, start_date={start_date}, end_date={end_date}")
+        df = ak.get_futures_daily(symbol=main_contract, start_date=start_date, end_date=end_date)
+    except Exception as e:
+        print(f"[市场数据] [akshare] 获取期货数据失败: {type(e).__name__}: {str(e)}")
+        return None
+
+    if df is None or df.empty:
+        print("[市场数据] [akshare] 期货数据为空")
+        return None
+
+    column_mapping = {
+        'date': 'date',
+        '日期': 'date',
+        '开盘': 'open',
+        '收盘': 'close',
+        '最高': 'high',
+        '最低': 'low',
+        '成交量': 'volume',
+        '成交额': 'turnover'
+    }
+    df = df.rename(columns={k: v for k, v in column_mapping.items() if k in df.columns})
+
+    if 'date' in df.columns:
+        df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
+
+    numeric_cols = ['open', 'close', 'high', 'low', 'volume', 'turnover']
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    df = standardize_market_dataframe(df)
+    print(f"[市场数据] [akshare] 成功获取 {len(df)} 条期货数据")
+    return df
+
+
+def fetch_cached_market_data(code: str, start_date: str, end_date: str, db: Session) -> Optional[pd.DataFrame]:
+    if db is None:
+        return None
+
+    start_date = normalize_date_str(start_date)
+    end_date = normalize_date_str(end_date)
+
+    asset = db.query(Asset).filter(Asset.code == code).first()
+    if not asset and is_a_share_code(code):
+        clean_code = normalize_stock_code(code)
+        asset = db.query(Asset).filter(Asset.code.like(f"%{clean_code}%")).first()
+    if not asset:
+        return None
+
+    try:
+        start_obj = date.fromisoformat(start_date)
+        end_obj = date.fromisoformat(end_date)
+    except ValueError:
+        return None
+
+    records = db.query(MarketData).filter(
+        MarketData.asset_id == asset.id,
+        MarketData.date >= start_obj,
+        MarketData.date <= end_obj
+    ).order_by(MarketData.date.asc()).all()
+
+    if not records:
+        return None
+
+    data = {
+        'date': [r.date.strftime('%Y-%m-%d') for r in records],
+        'open': [None for _ in records],
+        'close': [r.close_price for r in records],
+        'high': [None for _ in records],
+        'low': [None for _ in records],
+        'volume': [r.volume for r in records],
+        'turnover': [None for _ in records],
+        'amplitude': [None for _ in records],
+        'change_pct': [None for _ in records],
+        'change_amount': [None for _ in records],
+        'turnover_rate': [r.turnover_rate for r in records],
+        'pe_ratio': [r.pe_ratio for r in records],
+        'pb_ratio': [r.pb_ratio for r in records],
+        'market_cap': [r.market_cap for r in records],
+        'eps_forecast': [r.eps_forecast for r in records]
+    }
+
+    df = pd.DataFrame(data)
+    df = standardize_market_dataframe(df)
+    print(f"[市场数据] [缓存] 使用数据库缓存数据: code={code}, 条数={len(df)}")
+    return df
+
+
 def fetch_stock_data_yfinance(code: str, start_date: str, end_date: str, use_realtime: bool = False) -> Optional[pd.DataFrame]:
     """
     使用 yfinance 获取A股股票数据（主数据源）
@@ -417,6 +657,8 @@ def fetch_stock_data_yfinance(code: str, start_date: str, end_date: str, use_rea
         return None
     
     try:
+        start_date = normalize_date_str(start_date)
+        end_date = normalize_date_str(end_date)
         print(f"[市场数据] [yfinance] 尝试获取数据: code={code}, start_date={start_date}, end_date={end_date}, use_realtime={use_realtime}")
         
         # 如果是盘中且需要实时数据，且查询的是今天的数据
@@ -482,6 +724,9 @@ def fetch_stock_data_yfinance(code: str, start_date: str, end_date: str, use_rea
         except Exception as e:
             error_type = type(e).__name__
             error_msg = str(e)
+            if is_yfinance_rate_limit_error(e):
+                print(f"[市场数据] [yfinance] 触发频率限制: {error_msg}")
+                raise YFinanceRateLimitError(error_msg) from e
             # 检查是否是超时或网络相关错误
             if 'timeout' in error_msg.lower() or 'timed out' in error_msg.lower():
                 print(f"[市场数据] [yfinance] 获取数据超时: {error_msg}")
@@ -590,7 +835,7 @@ def fetch_stock_data_baostock(code: str, start_date: str, end_date: str) -> Opti
             return None
         
         try:
-            # 转换日期格式（baostock 需要 YYYYMMDD，必须是8位数字）
+            # 统一日期格式（YYYY-MM-DD），避免错误转成 20260103
             try:
                 start_dt = format_date_for_baostock(start_date)
                 end_dt = format_date_for_baostock(end_date)
@@ -742,7 +987,7 @@ def fetch_stock_data_with_fallback(code: str, target_date: date, db: Session) ->
     try:
         beijing_time = get_beijing_time()
         today = beijing_time.date()
-        target_date_str = target_date.strftime('%Y-%m-%d')
+        target_date_str = normalize_date_str(target_date)
         
         # 判断是否在交易时间内
         in_trading_hours = is_trading_hours()
@@ -765,7 +1010,7 @@ def fetch_stock_data_with_fallback(code: str, target_date: date, db: Session) ->
         # 尝试获取目标日期的收盘数据
         print(f"[市场数据] [回退机制] 尝试获取目标日期 {target_date_str} 的收盘数据")
         try:
-            df = fetch_stock_data(code, target_date_str, target_date_str)
+                df = fetch_stock_data(code, target_date_str, target_date_str)
             if df is not None and not df.empty:
                 print(f"[市场数据] [回退机制] 成功获取目标日期数据")
                 return df
@@ -819,7 +1064,7 @@ def fetch_stock_data_with_fallback(code: str, target_date: date, db: Session) ->
             print(f"[市场数据] [回退机制] 数据库中没有找到数据，尝试从外部API回溯...")
             for days_back in range(1, 31):
                 fallback_date = today - timedelta(days=days_back)
-                fallback_date_str = fallback_date.strftime('%Y-%m-%d')
+                fallback_date_str = normalize_date_str(fallback_date)
                 
                 print(f"[市场数据] [回退机制] 尝试回溯 {days_back} 天: {fallback_date_str}")
                 try:
@@ -853,14 +1098,30 @@ def fetch_stock_data(code: str, start_date: str, end_date: str) -> Optional[pd.D
     Returns:
         pd.DataFrame 或 None（所有数据源都失败时）
     """
+    start_date = normalize_date_str(start_date)
+    end_date = normalize_date_str(end_date)
     print(f"[市场数据] 开始获取股票数据: code={code}, start_date={start_date}, end_date={end_date}")
     
     beijing_time = get_beijing_time()
     today_str = beijing_time.strftime('%Y-%m-%d')
     in_trading_hours = is_trading_hours()
     
+    # 期货主力合约（CF. 前缀）
+    if is_futures_main_code(code):
+        df = fetch_futures_data_akshare(code, start_date, end_date)
+        if df is not None and not df.empty:
+            print(f"[市场数据] 使用 AkShare 期货数据成功获取")
+            return df
+
+    # A股优先使用 AkShare（避免 yfinance 限频）
+    if is_a_share_code(code):
+        df = fetch_stock_data_akshare(code, start_date, end_date)
+        if df is not None and not df.empty:
+            print(f"[市场数据] 使用 AkShare A股数据成功获取")
+            return df
+
     # 如果查询的是今天的数据且在交易时间内，尝试获取实时价格
-    if end_date >= today_str and in_trading_hours:
+    if end_date >= today_str and in_trading_hours and not is_futures_main_code(code):
         print(f"[市场数据] 盘中交易时间，尝试获取实时价格")
         df = fetch_stock_data_yfinance(code, start_date, end_date, use_realtime=True)
         if df is not None and not df.empty:
@@ -868,17 +1129,27 @@ def fetch_stock_data(code: str, start_date: str, end_date: str) -> Optional[pd.D
             return df
     
     # 1. 优先尝试 yfinance（收盘数据）
-    df = fetch_stock_data_yfinance(code, start_date, end_date, use_realtime=False)
-    if df is not None and not df.empty:
-        print(f"[市场数据] 使用 yfinance 成功获取数据")
-        return df
+    try:
+        df = fetch_stock_data_yfinance(code, start_date, end_date, use_realtime=False)
+        if df is not None and not df.empty:
+            print(f"[市场数据] 使用 yfinance 成功获取数据")
+            return df
+    except YFinanceRateLimitError as e:
+        print(f"[市场数据] yfinance 触发限频: {str(e)}")
+        if is_domestic_code(code):
+            df = fetch_stock_data_akshare(code, start_date, end_date)
+            if df is not None and not df.empty:
+                print(f"[市场数据] 降级到 AkShare 成功获取数据")
+                return df
+        raise
     
     # 2. yfinance 失败，尝试 baostock
-    print(f"[市场数据] yfinance 未获取到数据，尝试 baostock 备份...")
-    df = fetch_stock_data_baostock(code, start_date, end_date)
-    if df is not None and not df.empty:
-        print(f"[市场数据] 使用 baostock 成功获取数据")
-        return df
+    if is_a_share_code(code):
+        print(f"[市场数据] yfinance 未获取到数据，尝试 baostock 备份...")
+        df = fetch_stock_data_baostock(code, start_date, end_date)
+        if df is not None and not df.empty:
+            print(f"[市场数据] 使用 baostock 成功获取数据")
+            return df
     
     # 3. 所有数据源都失败
     print(f"[市场数据] 所有数据源都未获取到数据")
@@ -898,6 +1169,8 @@ def fetch_fund_data(code: str, start_date: str, end_date: str) -> Optional[pd.Da
     Returns:
         pd.DataFrame 或 None（失败时）
     """
+    start_date = normalize_date_str(start_date)
+    end_date = normalize_date_str(end_date)
     print(f"[市场数据] 开始获取基金数据: code={code}, start_date={start_date}, end_date={end_date}")
     
     # 基金数据暂时使用股票数据的获取方式（ETF 可以用 yfinance）
@@ -966,7 +1239,15 @@ def parse_market_data(df: pd.DataFrame, asset_type: str, code: str) -> List[Dict
             # 处理日期
             if 'date' in row:
                 if isinstance(row['date'], str):
-                    data["date"] = row['date']
+                    try:
+                        data["date"] = normalize_date_str(row['date'])
+                    except ValueError:
+                        data["date"] = row['date']
+                elif isinstance(row['date'], (int, np.integer)):
+                    try:
+                        data["date"] = normalize_date_str(str(row['date']))
+                    except ValueError:
+                        data["date"] = str(row['date'])
                 elif hasattr(row['date'], 'date'):
                     data["date"] = row['date'].date().isoformat()
                 elif hasattr(row['date'], 'strftime'):
@@ -1088,6 +1369,12 @@ def fetch_asset_data(
     print(f"[市场数据] ===== 开始获取资产数据 =====")
     print(f"[市场数据] 资产代码: {code}")
     print(f"[市场数据] 资产类型: {asset_type}")
+    try:
+        start_date = normalize_date_str(start_date)
+        end_date = normalize_date_str(end_date)
+    except ValueError as e:
+        print(f"[市场数据] 错误: 无法解析日期范围: {str(e)}")
+        return []
     print(f"[市场数据] 日期范围: {start_date} 至 {end_date}")
     
     try:
@@ -1121,6 +1408,12 @@ def fetch_asset_data(
             elif asset_type == "stock":
                 try:
                     df = fetch_stock_data(code, start_date, end_date)
+                except YFinanceRateLimitError as e:
+                    print(f"[市场数据] 触发 yfinance 限频，尝试降级: {str(e)}")
+                    if is_domestic_code(code):
+                        df = fetch_stock_data_akshare(code, start_date, end_date)
+                    if (df is None or df.empty) and db is not None:
+                        df = fetch_cached_market_data(code, start_date, end_date, db)
                 except Exception as e:
                     print(f"[市场数据] 错误: 获取股票数据时发生异常: {type(e).__name__}: {str(e)}")
                     traceback.print_exc()
@@ -1130,6 +1423,13 @@ def fetch_asset_data(
                     df = fetch_fund_data(code, start_date, end_date)
                 except Exception as e:
                     print(f"[市场数据] 错误: 获取基金数据时发生异常: {type(e).__name__}: {str(e)}")
+                    traceback.print_exc()
+                    df = None
+            elif asset_type == "futures":
+                try:
+                    df = fetch_futures_data_akshare(code, start_date, end_date)
+                except Exception as e:
+                    print(f"[市场数据] 错误: 获取期货数据时发生异常: {type(e).__name__}: {str(e)}")
                     traceback.print_exc()
                     df = None
             else:
