@@ -18,6 +18,10 @@ from services.storage import (
     normalize_avatar_url,
     ensure_bucket_exists
 )
+from services.asset import (
+    AssetService,
+    CORE_ASSET_CONFLICT_MESSAGE
+)
 
 __all__ = [
     "fetch_asset_data",
@@ -32,5 +36,7 @@ __all__ = [
     "delete_avatar",
     "get_public_url",
     "normalize_avatar_url",
-    "ensure_bucket_exists"
+    "ensure_bucket_exists",
+    "AssetService",
+    "CORE_ASSET_CONFLICT_MESSAGE"
 ]

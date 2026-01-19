@@ -1,12 +1,26 @@
 #!/bin/bash
 # 启动脚本：同时启动前后端服务
+# 支持本地和云端运行环境
 
 set -e
 
 echo "🚀 启动 CoolDown龙虎榜服务..."
 
+# 检测项目根目录（适配本地和云端）
+if [ -d "/app" ] && [ -d "/app/backend" ]; then
+    # 云端环境（Docker）
+    APP_ROOT="/app"
+    echo "📍 运行环境: 云端 (Docker)"
+else
+    # 本地环境
+    APP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    echo "📍 运行环境: 本地开发"
+fi
+
+echo "📂 项目根目录: $APP_ROOT"
+
 # 创建数据目录（用于头像文件存储）
-mkdir -p /app/data/avatars
+mkdir -p "$APP_ROOT/data/avatars"
 
 # 检查数据库连接配置
 echo "📁 检查数据库配置..."
@@ -19,17 +33,17 @@ else
 fi
 
 # 初始化数据库表结构（仅创建表，不创建任何测试数据）
-cd /app/backend
+cd "$APP_ROOT/backend"
 echo "📦 初始化数据库表结构..."
-PYTHONPATH=/app/backend python3 -m database.init_db || {
+PYTHONPATH="$APP_ROOT/backend" python3 -m database.init_db || {
     echo "⚠️  数据库表结构创建失败，请检查数据库连接"
     exit 1
 }
 
 # 启动后端 FastAPI（后台运行，端口 8000）
 echo "🔧 启动后端 API (端口 8000)..."
-cd /app/backend
-PYTHONPATH=/app/backend uvicorn main:app --host 0.0.0.0 --port 8000 &
+cd "$APP_ROOT/backend"
+PYTHONPATH="$APP_ROOT/backend" uvicorn main:app --host 0.0.0.0 --port 8000 &
 BACKEND_PID=$!
 
 # 等待后端启动并检查健康状态
@@ -51,7 +65,7 @@ echo ""
 
 # 启动前端 Next.js（前台运行，端口 7860，Hugging Face 标准端口）
 echo "🎨 启动前端服务 (端口 7860)..."
-cd /app/frontend
+cd "$APP_ROOT/frontend"
 PORT=7860 HOSTNAME=0.0.0.0 npm run start &
 FRONTEND_PID=$!
 

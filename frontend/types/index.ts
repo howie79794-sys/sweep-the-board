@@ -19,6 +19,7 @@ export interface Asset {
   baseline_date: string;
   start_date: string;
   end_date: string;
+  is_core: boolean;  // 是否为核心资产
   created_at: string;
   user?: User;
 }
@@ -81,4 +82,75 @@ export interface UserDetail extends User {
   assets: AssetDetail[];
   best_change_rate?: number;
   average_change_rate?: number;
+}
+
+// PK 池类型
+export interface PKPool {
+  id: number;
+  name: string;
+  description?: string;
+  created_at: string;
+  start_date?: string | null;
+  end_date?: string | null;
+  asset_count: number;
+}
+
+export interface PKPoolDetail {
+  id: number;
+  name: string;
+  description?: string;
+  created_at: string;
+  start_date?: string | null;
+  end_date?: string | null;
+  assets: Asset[];
+  chart_data: PKPoolChartAsset[];
+  snapshot_data: PKPoolSnapshot[];
+}
+
+export interface PKPoolChartAsset {
+  asset_id: number;
+  code: string;
+  name: string;
+  baseline_price?: number;
+  baseline_date?: string;
+  user?: {
+    id: number;
+    name: string;
+    avatar_url?: string | null;
+  };
+  data: Array<{
+    date: string;
+    close_price: number;
+    change_rate?: number | null;
+    pe_ratio?: number | null;
+    pb_ratio?: number | null;
+    market_cap?: number | null;
+    eps_forecast?: number | null;
+  }>;
+}
+
+export interface PKPoolSnapshot {
+  asset_id: number;
+  code: string;
+  name: string;
+  user?: {
+    id: number;
+    name: string;
+    avatar_url?: string | null;
+  };
+  baseline_price: number | null;
+  baseline_date: string;
+  latest_date: string;
+  latest_close_price: number | null;
+  yesterday_close_price: number | null;
+  daily_change_rate: number | null;
+  latest_market_cap: number | null;
+  eps_forecast: number | null;
+  change_rate: number | null;
+  pe_ratio: number | null;
+  pb_ratio: number | null;
+  baseline_pe_ratio: number | null;
+  stability_score: number | null;
+  annual_volatility: number | null;
+  daily_returns: number[] | null;
 }

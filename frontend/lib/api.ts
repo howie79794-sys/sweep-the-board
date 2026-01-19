@@ -255,3 +255,28 @@ export const rankingAPI = {
   },
   getUserHistory: (userId: number) => fetchAPI<any[]>(`/api/ranking/users/${userId}`),
 }
+
+// PK 池 API
+export const pkPoolAPI = {
+  getAll: () => fetchAPI<any[]>('/api/pk-pools'),
+  getById: (id: number) => fetchAPI<any>(`/api/pk-pools/${id}`),
+  create: (data: { name: string; description?: string; asset_ids: number[]; start_date?: string | null; end_date?: string | null }) =>
+    fetchAPI<any>('/api/pk-pools', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  update: (id: number, data: { name?: string; description?: string; asset_ids?: number[]; start_date?: string | null; end_date?: string | null }) =>
+    fetchAPI<any>(`/api/pk-pools/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+  delete: (id: number) => fetchAPI<any>(`/api/pk-pools/${id}`, {
+    method: 'DELETE',
+  }),
+  getDetail: (id: number, params?: { start_date?: string; end_date?: string }) => {
+    const query = new URLSearchParams()
+    if (params?.start_date) query.append('start_date', params.start_date)
+    if (params?.end_date) query.append('end_date', params.end_date)
+    return fetchAPI<any>(`/api/pk-pools/${id}/detail?${query}`)
+  },
+}

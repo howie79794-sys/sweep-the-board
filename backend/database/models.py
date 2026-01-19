@@ -1,7 +1,7 @@
 """数据库模型定义
 存放所有数据库表结构定义（User, Asset, MarketData, Ranking）
 """
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, Date, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, Date, ForeignKey, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database.config import Base
@@ -36,12 +36,41 @@ class Asset(Base):
     baseline_date = Column(Date, default="2026-01-05")
     start_date = Column(Date, default="2026-01-05")
     end_date = Column(Date, default="2026-12-31")
+    is_core = Column(Boolean, default=False, nullable=False)  # 是否为核心资产（一用户一心）
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # 关系
     user = relationship("User", back_populates="assets")
     market_data = relationship("MarketData", back_populates="asset", cascade="all, delete-orphan")
     rankings = relationship("Ranking", back_populates="asset")
+    pk_pools = relationship("PKPool", secondary="pk_pool_assets", back_populates="assets")
+
+
+class PKPool(Base):
+    """自定义PK池"""
+    __tablename__ = "pk_pools"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False, unique=True)
+    description = Column(String, nullable=True)
+    start_date = Column(Date, nullable=True)
+    end_date = Column(Date, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    assets = relationship("Asset", secondary="pk_pool_assets", back_populates="pk_pools")
+
+
+class PKPoolAsset(Base):
+    """PK池与资产的关联表"""
+    __tablename__ = "pk_pool_assets"
+    __table_args__ = (
+        UniqueConstraint("pool_id", "asset_id", name="uniq_pk_pool_asset"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    pool_id = Column(Integer, ForeignKey("pk_pools.id", ondelete="CASCADE"), nullable=False)
+    asset_id = Column(Integer, ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class MarketData(Base):

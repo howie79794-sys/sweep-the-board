@@ -26,6 +26,7 @@ export default function AdminPage() {
     market: "",
     code: "",
     name: "",
+    is_core: false,
   })
 
   useEffect(() => {
@@ -291,9 +292,10 @@ export default function AdminPage() {
         market: assetForm.market.trim(),
         code: assetForm.code.trim(),
         name: assetForm.name.trim(),
+        is_core: assetForm.is_core,
       })
       setShowAssetDialog(false)
-      setAssetForm({ user_id: "", asset_type: "stock", market: "", code: "", name: "" })
+      setAssetForm({ user_id: "", asset_type: "stock", market: "", code: "", name: "", is_core: false })
       setEditingAsset(null)
       await loadAssets()
     } catch (err: any) {
@@ -311,6 +313,7 @@ export default function AdminPage() {
       market: asset.market,
       code: asset.code,
       name: asset.name,
+      is_core: asset.is_core,
     })
     setShowAssetDialog(true)
   }
@@ -329,9 +332,10 @@ export default function AdminPage() {
         market: assetForm.market.trim(),
         code: assetForm.code.trim(),
         name: assetForm.name.trim(),
+        is_core: assetForm.is_core,
       })
       setShowAssetDialog(false)
-      setAssetForm({ user_id: "", asset_type: "stock", market: "", code: "", name: "" })
+      setAssetForm({ user_id: "", asset_type: "stock", market: "", code: "", name: "", is_core: false })
       setEditingAsset(null)
       await loadAssets()
     } catch (err: any) {
@@ -641,11 +645,25 @@ export default function AdminPage() {
                       placeholder="例如：卧龙电驱"
                     />
                   </div>
+                  <div>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={assetForm.is_core}
+                        onChange={(e) => setAssetForm({ ...assetForm, is_core: e.target.checked })}
+                        className="w-4 h-4 rounded border-gray-300 text-primary focus:ring-primary"
+                      />
+                      <span className="text-sm font-medium">设置为核心资产</span>
+                    </label>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      每个用户只能有一个核心资产。如果该用户已有核心资产，请先取消原有核心设置。
+                    </p>
+                  </div>
                   <div className="flex gap-2 justify-end">
                     <button
                       onClick={() => {
                         setShowAssetDialog(false)
-                        setAssetForm({ user_id: "", asset_type: "stock", market: "", code: "", name: "" })
+                        setAssetForm({ user_id: "", asset_type: "stock", market: "", code: "", name: "", is_core: false })
                         setEditingAsset(null)
                         setError(null)
                       }}
@@ -679,7 +697,14 @@ export default function AdminPage() {
                 >
                   <div className="flex items-center justify-between">
                     <div>
-                      <div className="font-semibold text-lg">{asset.name}</div>
+                      <div className="flex items-center gap-2">
+                        <div className="font-semibold text-lg">{asset.name}</div>
+                        {asset.is_core && (
+                          <span className="text-xs px-2 py-0.5 bg-gradient-to-r from-yellow-400 to-orange-400 text-white font-semibold rounded">
+                            核心
+                          </span>
+                        )}
+                      </div>
                       <div className="text-sm text-muted-foreground">
                         {asset.code} | {asset.market} | {asset.asset_type}
                       </div>

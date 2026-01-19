@@ -12,10 +12,11 @@ import json
 import traceback
 
 from database.config import get_db
-from database.models import User, Asset, MarketData, Ranking
+from database.models import User, Asset, MarketData, Ranking, PKPool, PKPoolAsset
 from services.market_data import update_asset_data, update_all_assets_data, get_latest_trading_date, calculate_stability_metrics
 from services.ranking import save_rankings, get_or_set_baseline_price
 from services.storage import upload_avatar_file, delete_avatar, normalize_avatar_url
+from services.asset import AssetService
 from config import MAX_UPLOAD_SIZE, ALLOWED_EXTENSIONS, BASELINE_DATE
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -55,6 +56,7 @@ class AssetCreate(BaseModel):
     baseline_date: Optional[str] = "2026-01-05"
     start_date: Optional[str] = "2026-01-05"
     end_date: Optional[str] = "2026-12-31"
+    is_core: Optional[bool] = False  # 是否为核心资产
 
 
 class AssetUpdate(BaseModel):
@@ -67,6 +69,7 @@ class AssetUpdate(BaseModel):
     baseline_date: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
+    is_core: Optional[bool] = None  # 是否为核心资产
 
 
 class AssetResponse(BaseModel):
@@ -80,8 +83,51 @@ class AssetResponse(BaseModel):
     baseline_date: date
     start_date: date
     end_date: date
+    is_core: bool  # 是否为核心资产
     created_at: datetime
     user: Optional[dict] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PKPoolCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    asset_ids: List[int] = Field(default_factory=list, description="池内资产ID列表")
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+
+
+class PKPoolUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    asset_ids: Optional[List[int]] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+
+
+class PKPoolResponse(BaseModel):
+    id: int
+    name: str
+    description: Optional[str]
+    start_date: Optional[date]
+    end_date: Optional[date]
+    created_at: datetime
+    asset_count: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PKPoolDetailResponse(BaseModel):
+    id: int
+    name: str
+    description: Optional[str]
+    start_date: Optional[date]
+    end_date: Optional[date]
+    created_at: datetime
+    assets: List[dict]
+    chart_data: List[dict]
+    snapshot_data: List[dict]
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -293,10 +339,12 @@ async def get_assets(
             "market": asset.market,
             "code": asset.code,
             "name": asset.name,
+            "is_core": asset.is_core,
             "baseline_price": asset.baseline_price,
             "baseline_date": asset.baseline_date,
             "start_date": asset.start_date,
             "end_date": asset.end_date,
+            "is_core": asset.is_core,
             "created_at": asset.created_at,
             "user": {"id": asset.user.id, "name": asset.user.name, "avatar_url": normalize_avatar_url(asset.user.avatar_url)} if asset.user else None
         }
@@ -325,11 +373,17 @@ async def create_asset(asset: AssetCreate, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == asset.user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
+
+    AssetService.ensure_single_core_asset(db, asset.user_id, asset.is_core)
     
-    # 检查该用户是否已有资产（每个用户只能绑定一个资产）
-    existing = db.query(Asset).filter(Asset.user_id == asset.user_id).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="该用户已绑定资产，每个用户只能绑定一个资产")
+    # 校验核心资产逻辑：如果要设置 is_core=True，确保该用户没有其他核心资产
+    if asset.is_core:
+        existing_core = db.query(Asset).filter(
+            Asset.user_id == asset.user_id,
+            Asset.is_core == True
+        ).first()
+        if existing_core:
+            raise HTTPException(status_code=400, detail="该用户已有关联的核心资产，请先取消原核心设置")
     
     asset_dict = asset.dict()
     # 转换日期字符串
@@ -349,10 +403,12 @@ async def create_asset(asset: AssetCreate, db: Session = Depends(get_db)):
         "market": db_asset.market,
         "code": db_asset.code,
         "name": db_asset.name,
+        "is_core": db_asset.is_core,
         "baseline_price": db_asset.baseline_price,
         "baseline_date": db_asset.baseline_date,
         "start_date": db_asset.start_date,
         "end_date": db_asset.end_date,
+        "is_core": db_asset.is_core,
         "created_at": db_asset.created_at,
         "user": {"id": db_asset.user.id, "name": db_asset.user.name, "avatar_url": db_asset.user.avatar_url} if db_asset.user else None
     }
@@ -372,27 +428,38 @@ async def update_asset(
         raise HTTPException(status_code=404, detail="资产不存在")
     
     update_data = asset_update.dict(exclude_unset=True)
+
+    target_user_id = update_data.get("user_id", db_asset.user_id)
+    target_is_core = update_data.get("is_core", db_asset.is_core)
+    AssetService.ensure_single_core_asset(db, target_user_id, target_is_core, asset_id=asset_id)
     
     # 转换日期字符串
     for date_field in ["baseline_date", "start_date", "end_date"]:
         if update_data.get(date_field):
             update_data[date_field] = date.fromisoformat(update_data[date_field])
     
-    # 如果更新user_id，验证新用户存在且该用户没有其他资产
+    # 如果更新user_id，验证新用户存在
     if "user_id" in update_data:
         new_user_id = update_data["user_id"]
         # 验证新用户存在
         user = db.query(User).filter(User.id == new_user_id).first()
         if not user:
             raise HTTPException(status_code=404, detail="用户不存在")
+    
+    # 校验核心资产逻辑：如果要设置 is_core=True，确保该用户没有其他核心资产
+    if "is_core" in update_data and update_data["is_core"] == True:
+        # 获取要更新的用户ID（可能是当前的，也可能是新的）
+        target_user_id = update_data.get("user_id", db_asset.user_id)
         
-        # 检查新用户是否已有其他资产（除了当前资产）
-        existing_asset = db.query(Asset).filter(
-            Asset.user_id == new_user_id,
+        # 检查该用户是否已有其他核心资产（排除当前资产）
+        existing_core = db.query(Asset).filter(
+            Asset.user_id == target_user_id,
+            Asset.is_core == True,
             Asset.id != asset_id
         ).first()
-        if existing_asset:
-            raise HTTPException(status_code=400, detail="该用户已绑定资产，每个用户只能绑定一个资产")
+        
+        if existing_core:
+            raise HTTPException(status_code=400, detail="该用户已有关联的核心资产，请先取消原核心设置")
     
     for key, value in update_data.items():
         setattr(db_asset, key, value)
@@ -407,10 +474,12 @@ async def update_asset(
         "market": db_asset.market,
         "code": db_asset.code,
         "name": db_asset.name,
+        "is_core": db_asset.is_core,
         "baseline_price": db_asset.baseline_price,
         "baseline_date": db_asset.baseline_date,
         "start_date": db_asset.start_date,
         "end_date": db_asset.end_date,
+        "is_core": db_asset.is_core,
         "created_at": db_asset.created_at,
         "user": {"id": db_asset.user.id, "name": db_asset.user.name, "avatar_url": db_asset.user.avatar_url} if db_asset.user else None
     }
@@ -428,6 +497,346 @@ async def delete_asset(asset_id: int, db: Session = Depends(get_db)):
     db.delete(db_asset)
     db.commit()
     return {"message": "资产已删除"}
+
+
+# ==================== PK池管理路由 ====================
+
+@router.get("/pk-pools", response_model=List[PKPoolResponse], tags=["pk_pools"])
+async def get_pk_pools(db: Session = Depends(get_db)):
+    """获取所有PK池列表"""
+    pools = db.query(PKPool).order_by(PKPool.created_at.desc()).all()
+    results = []
+    for pool in pools:
+        asset_count = db.query(func.count(PKPoolAsset.id)).filter(
+            PKPoolAsset.pool_id == pool.id
+        ).scalar() or 0
+        results.append({
+            "id": pool.id,
+            "name": pool.name,
+            "description": pool.description,
+            "start_date": pool.start_date,
+            "end_date": pool.end_date,
+            "created_at": pool.created_at,
+            "asset_count": asset_count,
+        })
+    return results
+
+
+@router.post("/pk-pools", response_model=PKPoolResponse, tags=["pk_pools"])
+async def create_pk_pool(pool: PKPoolCreate, db: Session = Depends(get_db)):
+    """创建PK池"""
+    existing = db.query(PKPool).filter(PKPool.name == pool.name).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="该PK池名称已存在，请更换名称")
+
+    start_date_obj = date.fromisoformat(pool.start_date) if pool.start_date else None
+    end_date_obj = date.fromisoformat(pool.end_date) if pool.end_date else None
+    if start_date_obj and end_date_obj and start_date_obj > end_date_obj:
+        raise HTTPException(status_code=400, detail="开始时间不能晚于结束时间")
+
+    db_pool = PKPool(
+        name=pool.name,
+        description=pool.description,
+        start_date=start_date_obj,
+        end_date=end_date_obj,
+    )
+    db.add(db_pool)
+    db.commit()
+    db.refresh(db_pool)
+
+    if pool.asset_ids:
+        assets = db.query(Asset).filter(Asset.id.in_(pool.asset_ids)).all()
+        found_ids = {asset.id for asset in assets}
+        missing_ids = [asset_id for asset_id in pool.asset_ids if asset_id not in found_ids]
+        if missing_ids:
+            raise HTTPException(status_code=400, detail=f"资产不存在: {missing_ids}")
+
+        for asset_id in pool.asset_ids:
+            db.add(PKPoolAsset(pool_id=db_pool.id, asset_id=asset_id))
+        db.commit()
+
+    asset_count = len(pool.asset_ids)
+    return {
+        "id": db_pool.id,
+        "name": db_pool.name,
+        "description": db_pool.description,
+        "start_date": db_pool.start_date,
+        "end_date": db_pool.end_date,
+        "created_at": db_pool.created_at,
+        "asset_count": asset_count,
+    }
+
+
+@router.get("/pk-pools/{pool_id}", tags=["pk_pools"])
+async def get_pk_pool(pool_id: int, db: Session = Depends(get_db)):
+    """获取PK池详情"""
+    pool = db.query(PKPool).filter(PKPool.id == pool_id).first()
+    if not pool:
+        raise HTTPException(status_code=404, detail="PK池不存在")
+
+    assets = db.query(Asset).join(PKPoolAsset, PKPoolAsset.asset_id == Asset.id).filter(
+        PKPoolAsset.pool_id == pool_id
+    ).all()
+    asset_list = [
+        {
+            "id": asset.id,
+            "user_id": asset.user_id,
+            "asset_type": asset.asset_type,
+            "market": asset.market,
+            "code": asset.code,
+            "name": asset.name,
+            "baseline_price": asset.baseline_price,
+            "baseline_date": asset.baseline_date,
+            "start_date": asset.start_date,
+            "end_date": asset.end_date,
+            "is_core": asset.is_core,
+            "created_at": asset.created_at,
+            "user": {"id": asset.user.id, "name": asset.user.name, "avatar_url": normalize_avatar_url(asset.user.avatar_url)} if asset.user else None
+        }
+        for asset in assets
+    ]
+
+    return {
+        "id": pool.id,
+        "name": pool.name,
+        "description": pool.description,
+        "start_date": pool.start_date,
+        "end_date": pool.end_date,
+        "created_at": pool.created_at,
+        "assets": asset_list,
+    }
+
+
+@router.put("/pk-pools/{pool_id}", response_model=PKPoolResponse, tags=["pk_pools"])
+async def update_pk_pool(pool_id: int, pool_update: PKPoolUpdate, db: Session = Depends(get_db)):
+    """更新PK池"""
+    pool = db.query(PKPool).filter(PKPool.id == pool_id).first()
+    if not pool:
+        raise HTTPException(status_code=404, detail="PK池不存在")
+
+    update_data = pool_update.dict(exclude_unset=True)
+
+    if "name" in update_data and update_data["name"] != pool.name:
+        existing = db.query(PKPool).filter(PKPool.name == update_data["name"]).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="该PK池名称已存在，请更换名称")
+        pool.name = update_data["name"]
+
+    if "description" in update_data:
+        pool.description = update_data["description"]
+
+    if "start_date" in update_data:
+        pool.start_date = date.fromisoformat(update_data["start_date"]) if update_data["start_date"] else None
+
+    if "end_date" in update_data:
+        pool.end_date = date.fromisoformat(update_data["end_date"]) if update_data["end_date"] else None
+
+    if pool.start_date and pool.end_date and pool.start_date > pool.end_date:
+        raise HTTPException(status_code=400, detail="开始时间不能晚于结束时间")
+
+    if "asset_ids" in update_data and update_data["asset_ids"] is not None:
+        asset_ids = update_data["asset_ids"]
+        assets = db.query(Asset).filter(Asset.id.in_(asset_ids)).all() if asset_ids else []
+        found_ids = {asset.id for asset in assets}
+        missing_ids = [asset_id for asset_id in asset_ids if asset_id not in found_ids]
+        if missing_ids:
+            raise HTTPException(status_code=400, detail=f"资产不存在: {missing_ids}")
+
+        db.query(PKPoolAsset).filter(PKPoolAsset.pool_id == pool_id).delete()
+        for asset_id in asset_ids:
+            db.add(PKPoolAsset(pool_id=pool_id, asset_id=asset_id))
+
+    db.commit()
+    db.refresh(pool)
+
+    asset_count = db.query(func.count(PKPoolAsset.id)).filter(
+        PKPoolAsset.pool_id == pool_id
+    ).scalar() or 0
+
+    return {
+        "id": pool.id,
+        "name": pool.name,
+        "description": pool.description,
+        "start_date": pool.start_date,
+        "end_date": pool.end_date,
+        "created_at": pool.created_at,
+        "asset_count": asset_count,
+    }
+
+
+@router.delete("/pk-pools/{pool_id}", tags=["pk_pools"])
+async def delete_pk_pool(pool_id: int, db: Session = Depends(get_db)):
+    """删除PK池"""
+    pool = db.query(PKPool).filter(PKPool.id == pool_id).first()
+    if not pool:
+        raise HTTPException(status_code=404, detail="PK池不存在")
+
+    db.delete(pool)
+    db.commit()
+    return {"message": "PK池已删除"}
+
+
+@router.get("/pk-pools/{pool_id}/detail", response_model=PKPoolDetailResponse, tags=["pk_pools"])
+async def get_pk_pool_detail(
+    pool_id: int,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """获取PK池详情（包含图表和指标数据）"""
+    pool = db.query(PKPool).filter(PKPool.id == pool_id).first()
+    if not pool:
+        raise HTTPException(status_code=404, detail="PK池不存在")
+
+    assets = db.query(Asset).join(PKPoolAsset, PKPoolAsset.asset_id == Asset.id).filter(
+        PKPoolAsset.pool_id == pool_id
+    ).all()
+
+    baseline_date_obj = date.fromisoformat(BASELINE_DATE) if isinstance(BASELINE_DATE, str) else BASELINE_DATE
+    start_date_obj = date.fromisoformat(start_date) if start_date else (pool.start_date or baseline_date_obj)
+    end_date_obj = date.fromisoformat(end_date) if end_date else (pool.end_date or date.today())
+    if start_date_obj > end_date_obj:
+        raise HTTPException(status_code=400, detail="开始时间不能晚于结束时间")
+
+    chart_results = []
+    snapshot_results = []
+
+    for asset in assets:
+        market_data_list = db.query(MarketData).filter(
+            MarketData.asset_id == asset.id,
+            MarketData.date >= start_date_obj,
+            MarketData.date <= end_date_obj
+        ).order_by(MarketData.date.asc()).all()
+
+        baseline_price = asset.baseline_price
+        if not baseline_price:
+            baseline_data = db.query(MarketData).filter(
+                MarketData.asset_id == asset.id,
+                MarketData.date == baseline_date_obj
+            ).first()
+            if baseline_data:
+                baseline_price = baseline_data.close_price
+
+        data_points = []
+        for md in market_data_list:
+            change_rate = None
+            if baseline_price and baseline_price > 0:
+                change_rate = ((md.close_price - baseline_price) / baseline_price) * 100
+            data_points.append({
+                "date": md.date.isoformat(),
+                "close_price": md.close_price,
+                "change_rate": change_rate,
+                "pe_ratio": md.pe_ratio if md.pe_ratio is not None else 0.0,
+                "pb_ratio": md.pb_ratio if md.pb_ratio is not None else 0.0,
+                "market_cap": md.market_cap if md.market_cap is not None else 0.0,
+                "eps_forecast": md.eps_forecast if md.eps_forecast is not None else 0.0,
+            })
+
+        chart_results.append({
+            "asset_id": asset.id,
+            "code": asset.code,
+            "name": asset.name,
+            "baseline_price": baseline_price,
+            "baseline_date": asset.baseline_date.isoformat() if asset.baseline_date else None,
+            "user": {
+                "id": asset.user.id,
+                "name": asset.user.name,
+                "avatar_url": normalize_avatar_url(asset.user.avatar_url) if asset.user.avatar_url else None
+            } if asset.user else None,
+            "data": data_points
+        })
+
+        latest_trading_date = get_latest_trading_date(db, asset.id)
+        latest_data = db.query(MarketData).filter(
+            MarketData.asset_id == asset.id,
+            MarketData.date == latest_trading_date
+        ).first()
+
+        baseline_data = db.query(MarketData).filter(
+            MarketData.asset_id == asset.id,
+            MarketData.date == baseline_date_obj
+        ).first()
+
+        baseline_price = baseline_data.close_price if baseline_data else asset.baseline_price
+        baseline_pe_ratio = baseline_data.pe_ratio if baseline_data and baseline_data.pe_ratio is not None else None
+
+        change_rate = None
+        if latest_data and baseline_price and baseline_price > 0:
+            change_rate = ((latest_data.close_price - baseline_price) / baseline_price) * 100
+
+        yesterday_data = db.query(MarketData).filter(
+            MarketData.asset_id == asset.id,
+            MarketData.date < latest_trading_date
+        ).order_by(MarketData.date.desc()).first()
+
+        yesterday_close_price = yesterday_data.close_price if yesterday_data else None
+        daily_change_rate = None
+        if latest_data and yesterday_close_price and yesterday_close_price > 0:
+            daily_change_rate = ((latest_data.close_price - yesterday_close_price) / yesterday_close_price) * 100
+
+        pe_ratio = latest_data.pe_ratio if latest_data and latest_data.pe_ratio is not None else None
+        pb_ratio = latest_data.pb_ratio if latest_data and latest_data.pb_ratio is not None else None
+        market_cap = latest_data.market_cap if latest_data and latest_data.market_cap is not None else None
+        eps_forecast = latest_data.eps_forecast if latest_data and latest_data.eps_forecast is not None else None
+
+        stability_metrics = calculate_stability_metrics(asset.id, db)
+
+        snapshot_results.append({
+            "asset_id": asset.id,
+            "code": asset.code,
+            "name": asset.name,
+            "user": {
+                "id": asset.user.id,
+                "name": asset.user.name,
+                "avatar_url": normalize_avatar_url(asset.user.avatar_url) if asset.user.avatar_url else None
+            } if asset.user else None,
+            "baseline_price": baseline_price,
+            "baseline_date": baseline_date_obj.isoformat(),
+            "latest_date": latest_trading_date.isoformat(),
+            "latest_close_price": latest_data.close_price if latest_data else None,
+            "yesterday_close_price": yesterday_close_price,
+            "daily_change_rate": daily_change_rate,
+            "latest_market_cap": market_cap,
+            "eps_forecast": eps_forecast,
+            "change_rate": change_rate,
+            "pe_ratio": pe_ratio,
+            "pb_ratio": pb_ratio,
+            "baseline_pe_ratio": baseline_pe_ratio,
+            "stability_score": stability_metrics["stability_score"],
+            "annual_volatility": stability_metrics["annual_volatility"],
+            "daily_returns": stability_metrics["daily_returns"],
+        })
+
+    asset_list = [
+        {
+            "id": asset.id,
+            "user_id": asset.user_id,
+            "asset_type": asset.asset_type,
+            "market": asset.market,
+            "code": asset.code,
+            "name": asset.name,
+            "baseline_price": asset.baseline_price,
+            "baseline_date": asset.baseline_date,
+            "start_date": asset.start_date,
+            "end_date": asset.end_date,
+            "is_core": asset.is_core,
+            "created_at": asset.created_at,
+            "user": {"id": asset.user.id, "name": asset.user.name, "avatar_url": normalize_avatar_url(asset.user.avatar_url)} if asset.user else None
+        }
+        for asset in assets
+    ]
+
+    return {
+        "id": pool.id,
+        "name": pool.name,
+        "description": pool.description,
+        "start_date": pool.start_date,
+        "end_date": pool.end_date,
+        "created_at": pool.created_at,
+        "assets": asset_list,
+        "chart_data": chart_results,
+        "snapshot_data": snapshot_results,
+    }
 
 
 # ==================== 数据管理路由 ====================

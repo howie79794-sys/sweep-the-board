@@ -15,13 +15,14 @@ CREATE TABLE IF NOT EXISTS assets (
     market TEXT NOT NULL,
     code TEXT NOT NULL,
     name TEXT NOT NULL,
+    is_core BOOLEAN DEFAULT 0,
     baseline_price REAL,
     baseline_date DATE DEFAULT '2026-01-05',
     start_date DATE DEFAULT '2026-01-05',
     end_date DATE DEFAULT '2026-12-31',
+    is_core BOOLEAN DEFAULT 0 NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    UNIQUE(user_id)
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 -- 市场数据表
@@ -56,11 +57,36 @@ CREATE TABLE IF NOT EXISTS rankings (
     UNIQUE(date, asset_id, rank_type)
 );
 
+-- PK池表
+CREATE TABLE IF NOT EXISTS pk_pools (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT,
+    start_date DATE,
+    end_date DATE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- PK池与资产关联表
+CREATE TABLE IF NOT EXISTS pk_pool_assets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pool_id INTEGER NOT NULL,
+    asset_id INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (pool_id) REFERENCES pk_pools(id) ON DELETE CASCADE,
+    FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CASCADE,
+    UNIQUE(pool_id, asset_id)
+);
+
 -- 创建索引
 CREATE INDEX IF NOT EXISTS idx_assets_user_id ON assets(user_id);
 CREATE INDEX IF NOT EXISTS idx_assets_code ON assets(code);
+CREATE INDEX IF NOT EXISTS idx_assets_is_core ON assets(is_core);
 CREATE INDEX IF NOT EXISTS idx_market_data_asset_id ON market_data(asset_id);
 CREATE INDEX IF NOT EXISTS idx_market_data_date ON market_data(date);
 CREATE INDEX IF NOT EXISTS idx_rankings_date ON rankings(date);
 CREATE INDEX IF NOT EXISTS idx_rankings_asset_id ON rankings(asset_id);
 CREATE INDEX IF NOT EXISTS idx_rankings_user_id ON rankings(user_id);
+CREATE INDEX IF NOT EXISTS idx_pk_pools_name ON pk_pools(name);
+CREATE INDEX IF NOT EXISTS idx_pk_pool_assets_pool_id ON pk_pool_assets(pool_id);
+CREATE INDEX IF NOT EXISTS idx_pk_pool_assets_asset_id ON pk_pool_assets(asset_id);

@@ -33,6 +33,12 @@ export default function RootLayout({
                     首页
                   </a>
                   <a
+                    href="/pk-pools"
+                    className="px-4 py-2 rounded hover:bg-secondary transition-colors"
+                  >
+                    自定义 PK
+                  </a>
+                  <a
                     href="/admin"
                     className="px-4 py-2 rounded hover:bg-secondary transition-colors"
                   >

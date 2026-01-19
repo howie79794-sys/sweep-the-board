@@ -54,9 +54,19 @@ export function AssetCard({
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-1">
               <div className="font-semibold text-lg">{asset.name}</div>
+              {asset.is_core && (
+                <span className="text-xs px-2 py-0.5 bg-amber-500 text-white rounded">
+                  核心
+                </span>
+              )}
               <span className="text-xs px-2 py-0.5 bg-secondary rounded">
                 {assetTypeLabels[asset.asset_type] || asset.asset_type}
               </span>
+              {asset.is_core && (
+                <span className="text-xs px-2 py-0.5 bg-gradient-to-r from-yellow-400 to-orange-400 text-white font-semibold rounded">
+                  核心
+                </span>
+              )}
             </div>
             <div className="text-sm text-muted-foreground space-y-1">
               <div>
