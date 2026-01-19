@@ -213,7 +213,18 @@ def is_a_share_code(code: str) -> bool:
 
 
 def is_futures_main_code(code: str) -> bool:
-    return code.upper().strip().startswith("CF.")
+    """
+    判断是否为期货主力合约代码
+    支持格式：
+    - CF.IF0, CF.IC, CF.IM, CF.IH
+    - IF0, IC, IM0, IH
+    - IF=F, IC=F, IM=F, IH=F
+    """
+    code_upper = code.upper().strip()
+    # 移除前缀标记
+    code_clean = code_upper.replace("CF.", "").replace("=F", "")
+    # 检查是否为股指期货代码
+    return any(code_clean.startswith(prefix) for prefix in ["IF", "IC", "IM", "IH"])
 
 
 def is_domestic_code(code: str) -> bool:
@@ -503,43 +514,63 @@ def fetch_stock_data_akshare(code: str, start_date: str, end_date: str) -> Optio
 
 
 def resolve_futures_main_contract(code: str) -> Optional[str]:
+    """
+    解析期货主力合约代码
+    输入格式：IF0, IF=F, CF.IF0, IC, IM0, IH 等
+    输出：主力合约代码或指数代码（如 IF88 表示连续合约指数）
+    """
     if not AKSHARE_AVAILABLE:
         return None
 
-    symbol = code.upper().replace("CF.", "").strip()
-    symbol_no0 = symbol[:-1] if symbol.endswith("0") else symbol
-
-    for candidate in [symbol, symbol_no0]:
-        if not candidate:
-            continue
-        try:
-            df = ak.futures_main_relation(symbol=candidate)
-        except Exception as e:
-            print(f"[市场数据] [akshare] 获取主力合约关系失败: {type(e).__name__}: {str(e)}")
-            continue
-
-        if df is None or df.empty:
-            continue
-
-        # 尝试多种字段命名
-        for col in ['main_contract', '主力合约', '主力合约代码', '合约代码', 'symbol']:
-            if col in df.columns:
-                if 'symbol' in df.columns and col != 'symbol':
-                    matched = df[df['symbol'].astype(str).str.upper() == candidate]
-                    if not matched.empty:
-                        return str(matched.iloc[0][col])
-                return str(df.iloc[0][col])
+    # 清理代码格式：移除 CF., =F 等标记，移除尾部的 0
+    code_upper = code.upper().strip()
+    symbol = code_upper.replace("CF.", "").replace("=F", "").strip()
+    
+    # 移除尾部的 0（IF0 -> IF, IM0 -> IM）
+    if symbol.endswith("0"):
+        symbol = symbol[:-1]
+    
+    # 提取基础代码（IF, IC, IM, IH）
+    base_symbol = None
+    for prefix in ["IF", "IC", "IM", "IH"]:
+        if symbol.startswith(prefix):
+            base_symbol = prefix
+            break
+    
+    if not base_symbol:
+        print(f"[市场数据] [akshare] 无法识别期货代码: {code}")
+        return None
+    
+    print(f"[市场数据] [akshare] 解析期货代码: 输入={code}, 基础代码={base_symbol}")
+    
+    # 股指期货连续合约代码映射
+    # 88 表示加权连续合约，89 表示近月连续合约
+    index_mapping = {
+        "IF": "IF88",  # 沪深300股指期货连续合约
+        "IC": "IC88",  # 中证500股指期货连续合约
+        "IH": "IH88",  # 上证50股指期货连续合约
+        "IM": "IM88",  # 中证1000股指期货连续合约
+    }
+    
+    if base_symbol in index_mapping:
+        main_contract = index_mapping[base_symbol]
+        print(f"[市场数据] [akshare] 使用连续合约: {main_contract}")
+        return main_contract
+    
+    print(f"[市场数据] [akshare] 未找到映射: symbol={base_symbol}")
     return None
 
 
 def fetch_futures_data_akshare(code: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
     """
     使用 AkShare 获取股指期货主力合约历史数据
+    支持格式：IF0, IC, IM0, IH, CF.IF0, IF=F 等
     """
     if not AKSHARE_AVAILABLE:
         print("[市场数据] [akshare] 不可用")
         return None
     if not is_futures_main_code(code):
+        print(f"[市场数据] [akshare] 非期货代码: {code}")
         return None
 
     start_date = normalize_date_str(start_date)
@@ -551,25 +582,69 @@ def fetch_futures_data_akshare(code: str, start_date: str, end_date: str) -> Opt
         return None
 
     try:
-        print(f"[市场数据] [akshare] 获取期货数据: main_contract={main_contract}, start_date={start_date}, end_date={end_date}")
-        df = ak.get_futures_daily(symbol=main_contract, start_date=start_date, end_date=end_date)
+        print(f"[市场数据] [akshare] 获取期货数据: code={code}, main_contract={main_contract}, start_date={start_date}, end_date={end_date}")
+        
+        # 尝试多种 API 获取期货数据
+        df = None
+        
+        # 方法1: 使用 futures_zh_daily_sina（最稳定，支持连续合约）
+        try:
+            # 将日期格式转换为 YYYYMMDD（akshare 期货接口要求）
+            start_dt = start_date.replace("-", "")
+            end_dt = end_date.replace("-", "")
+            df = ak.futures_zh_daily_sina(symbol=main_contract, start_date=start_dt, end_date=end_dt)
+            if df is not None and not df.empty:
+                print(f"[市场数据] [akshare] 使用 futures_zh_daily_sina 成功")
+        except Exception as e:
+            print(f"[市场数据] [akshare] futures_zh_daily_sina 失败: {str(e)}")
+        
+        # 方法2: 如果方法1失败，尝试 get_cffex_daily（中金所接口）
+        if df is None or df.empty:
+            try:
+                df = ak.get_cffex_daily(date=end_date.replace("-", ""))
+                if df is not None and not df.empty:
+                    # 过滤出对应的合约
+                    base_symbol = main_contract[:2]  # IF88 -> IF
+                    df = df[df['symbol'].str.startswith(base_symbol)]
+                    if not df.empty:
+                        print(f"[市场数据] [akshare] 使用 get_cffex_daily 成功")
+            except Exception as e:
+                print(f"[市场数据] [akshare] get_cffex_daily 失败: {str(e)}")
+        
     except Exception as e:
         print(f"[市场数据] [akshare] 获取期货数据失败: {type(e).__name__}: {str(e)}")
+        traceback.print_exc()
         return None
 
     if df is None or df.empty:
-        print("[市场数据] [akshare] 期货数据为空")
+        print(f"[市场数据] [akshare] 期货数据为空: main_contract={main_contract}")
         return None
 
+    print(f"[市场数据] [akshare] 原始数据列: {df.columns.tolist()}")
+    
+    # 映射多种可能的列名
     column_mapping = {
         'date': 'date',
         '日期': 'date',
+        'Date': 'date',
         '开盘': 'open',
+        'open': 'open',
+        'Open': 'open',
         '收盘': 'close',
+        'close': 'close',
+        'Close': 'close',
         '最高': 'high',
+        'high': 'high',
+        'High': 'high',
         '最低': 'low',
+        'low': 'low',
+        'Low': 'low',
         '成交量': 'volume',
-        '成交额': 'turnover'
+        'volume': 'volume',
+        'Volume': 'volume',
+        '成交额': 'turnover',
+        'turnover': 'turnover',
+        'Turnover': 'turnover'
     }
     df = df.rename(columns={k: v for k, v in column_mapping.items() if k in df.columns})
 
@@ -1060,13 +1135,14 @@ def fetch_stock_data_with_fallback(code: str, target_date: date, db: Session) ->
                 print(f"[市场数据] [回退机制] 查询数据库时发生异常: {type(e).__name__}: {str(e)}")
                 traceback.print_exc()
             
-            # 如果数据库中没有数据，尝试回溯日期（最多回溯30天）
-            print(f"[市场数据] [回退机制] 数据库中没有找到数据，尝试从外部API回溯...")
-            for days_back in range(1, 31):
+            # 如果数据库中没有数据，尝试回溯日期（最多回溯5天，防止无限回溯导致崩溃）
+            MAX_BACKTRACK_DAYS = 5
+            print(f"[市场数据] [回退机制] 数据库中没有找到数据，尝试从外部API回溯（最多{MAX_BACKTRACK_DAYS}天）...")
+            for days_back in range(1, MAX_BACKTRACK_DAYS + 1):
                 fallback_date = today - timedelta(days=days_back)
                 fallback_date_str = normalize_date_str(fallback_date)
                 
-                print(f"[市场数据] [回退机制] 尝试回溯 {days_back} 天: {fallback_date_str}")
+                print(f"[市场数据] [回退机制] 尝试回溯 {days_back}/{MAX_BACKTRACK_DAYS} 天: {fallback_date_str}")
                 try:
                     df = fetch_stock_data(code, fallback_date_str, fallback_date_str)
                     if df is not None and not df.empty:
@@ -1077,6 +1153,8 @@ def fetch_stock_data_with_fallback(code: str, target_date: date, db: Session) ->
                 except Exception as e:
                     print(f"[市场数据] [回退机制] 回溯 {fallback_date_str} 时发生异常: {type(e).__name__}: {str(e)}")
                     continue
+            
+            print(f"[市场数据] [回退机制] 已回溯 {MAX_BACKTRACK_DAYS} 天仍无数据，停止回溯以防止崩溃")
             
             print(f"[市场数据] [回退机制] 所有尝试都失败，无法获取数据")
             return None
@@ -1396,8 +1474,17 @@ def fetch_asset_data(
                 print(f"[市场数据] 错误: 无法解析 end_date: {end_date}, 错误: {str(e)}")
                 return []
             
+            # 强制期货代码使用 AkShare（即使 asset_type 不是 futures）
+            if is_futures_main_code(code) or asset_type == "futures":
+                print(f"[市场数据] 检测到期货代码，强制使用 AkShare 期货接口")
+                try:
+                    df = fetch_futures_data_akshare(code, start_date, end_date)
+                except Exception as e:
+                    print(f"[市场数据] 错误: 获取期货数据时发生异常: {type(e).__name__}: {str(e)}")
+                    traceback.print_exc()
+                    df = None
             # 如果查询的是今天的数据，且是股票类型，且有数据库会话，使用回退机制
-            if asset_type == "stock" and end_date_obj == today and db is not None:
+            elif asset_type == "stock" and end_date_obj == today and db is not None:
                 print(f"[市场数据] 查询今天的数据，使用回退机制")
                 try:
                     df = fetch_stock_data_with_fallback(code, today, db)
@@ -1423,13 +1510,6 @@ def fetch_asset_data(
                     df = fetch_fund_data(code, start_date, end_date)
                 except Exception as e:
                     print(f"[市场数据] 错误: 获取基金数据时发生异常: {type(e).__name__}: {str(e)}")
-                    traceback.print_exc()
-                    df = None
-            elif asset_type == "futures":
-                try:
-                    df = fetch_futures_data_akshare(code, start_date, end_date)
-                except Exception as e:
-                    print(f"[市场数据] 错误: 获取期货数据时发生异常: {type(e).__name__}: {str(e)}")
                     traceback.print_exc()
                     df = None
             else:
