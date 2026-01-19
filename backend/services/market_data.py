@@ -1010,7 +1010,7 @@ def fetch_stock_data_with_fallback(code: str, target_date: date, db: Session) ->
         # 尝试获取目标日期的收盘数据
         print(f"[市场数据] [回退机制] 尝试获取目标日期 {target_date_str} 的收盘数据")
         try:
-                df = fetch_stock_data(code, target_date_str, target_date_str)
+            df = fetch_stock_data(code, target_date_str, target_date_str)
             if df is not None and not df.empty:
                 print(f"[市场数据] [回退机制] 成功获取目标日期数据")
                 return df
