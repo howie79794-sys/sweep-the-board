@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react"
 import { userAPI, assetAPI, dataAPI } from "@/lib/api"
 import { type User, type Asset } from "@/types"
 import { UserAvatar } from "@/components/UserAvatar"
+import { CustomUpdateModal } from "@/components/CustomUpdateModal"
 import { cn } from "@/lib/utils"
 
 export default function AdminPage() {
@@ -33,6 +34,7 @@ export default function AdminPage() {
   const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const timeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const [showCustomUpdateModal, setShowCustomUpdateModal] = useState(false)
   
   // 清理定时器
   useEffect(() => {
@@ -841,6 +843,12 @@ export default function AdminPage() {
               </p>
               <div className="space-y-3">
                 <button
+                  onClick={() => setShowCustomUpdateModal(true)}
+                  className="px-6 py-3 bg-secondary text-secondary-foreground rounded hover:bg-secondary/90"
+                >
+                  单点数据校准
+                </button>
+                <button
                   onClick={handleUpdateData}
                   disabled={updating || loading}
                   className="px-6 py-3 bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2"
@@ -891,6 +899,22 @@ export default function AdminPage() {
         </div>
       )}
       
+      {/* 单点数据校准弹窗 */}
+      <CustomUpdateModal
+        isOpen={showCustomUpdateModal}
+        onClose={() => setShowCustomUpdateModal(false)}
+        assets={assets}
+        onSuccess={() => {
+          setToastMessage({ type: 'success', message: '数据校准成功！' })
+          setTimeout(() => setToastMessage(null), 3000)
+          loadAssets() // 刷新资产列表
+        }}
+        onError={(message) => {
+          setToastMessage({ type: 'error', message: `校准失败: ${message}` })
+          setTimeout(() => setToastMessage(null), 3000)
+        }}
+      />
+
       {/* Toast 提示 */}
       {toastMessage && (
         <div

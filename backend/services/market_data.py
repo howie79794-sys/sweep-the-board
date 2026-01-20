@@ -1772,6 +1772,150 @@ def store_market_data(
     return stored_count + updated_count
 
 
+def custom_update_asset_data(asset_id: int, target_date: str, db: Session) -> Dict:
+    """
+    单点数据校准：强制覆盖指定日期的数据
+    
+    核心逻辑：
+    1. 忽略现有的"三层过滤"逻辑，直接调用对应的数据源接口
+    2. 强制覆盖：使用数据库 upsert 逻辑，如果该记录已存在，则用新抓取的值覆盖旧值
+    
+    Args:
+        asset_id: 资产ID
+        target_date: 目标日期 "YYYY-MM-DD"
+        db: 数据库会话
+    
+    Returns:
+        {"success": bool, "message": str, "data": dict or None}
+    """
+    print(f"[市场数据] [单点校准] ========== 开始单点数据校准 ==========")
+    print(f"[市场数据] [单点校准] asset_id={asset_id}, target_date={target_date}")
+    
+    # 验证日期格式
+    try:
+        target_date = normalize_date_str(target_date)
+        target_date_obj = date.fromisoformat(target_date)
+    except ValueError as e:
+        error_msg = f"日期格式错误: {target_date}, 错误: {str(e)}"
+        print(f"[市场数据] [单点校准] ✗ {error_msg}")
+        return {"success": False, "message": error_msg, "data": None}
+    
+    # 获取资产信息
+    asset = db.query(Asset).filter(Asset.id == asset_id).first()
+    if not asset:
+        error_msg = f"资产不存在 (asset_id={asset_id})"
+        print(f"[市场数据] [单点校准] ✗ {error_msg}")
+        return {"success": False, "message": error_msg, "data": None}
+    
+    print(f"[市场数据] [单点校准] 资产信息: ID={asset.id}, 名称={asset.name}, 代码={asset.code}, 类型={asset.asset_type}")
+    
+    # 强制调用数据源接口（忽略所有过滤逻辑）
+    print(f"[市场数据] [单点校准] 强制调用数据源接口获取 {target_date} 的数据...")
+    try:
+        # 直接调用 fetch_asset_data，传入相同的开始和结束日期
+        data_list = fetch_asset_data(
+            code=asset.code,
+            asset_type=asset.asset_type,
+            start_date=target_date,
+            end_date=target_date,
+            db=None  # 不传入 db，避免回退机制
+        )
+        
+        if not data_list or len(data_list) == 0:
+            error_msg = f"未能从数据源获取到 {target_date} 的数据"
+            print(f"[市场数据] [单点校准] ✗ {error_msg}")
+            return {"success": False, "message": error_msg, "data": None}
+        
+        # 取第一条数据（应该只有一条）
+        data = data_list[0]
+        print(f"[市场数据] [单点校准] 成功获取数据: {data}")
+        
+        # 强制覆盖数据库记录（upsert）
+        date_obj = date.fromisoformat(data["date"])
+        existing = db.query(MarketData).filter(
+            MarketData.asset_id == asset_id,
+            MarketData.date == date_obj
+        ).first()
+        
+        if existing:
+            # 强制覆盖所有字段
+            print(f"[市场数据] [单点校准] 记录已存在，强制覆盖所有字段...")
+            existing.close_price = data["close_price"]
+            existing.volume = data.get("volume")
+            existing.turnover_rate = data.get("turnover_rate")
+            
+            # 强制覆盖财务指标（即使为 None 也覆盖）
+            existing.pe_ratio = data.get("pe_ratio")
+            existing.pb_ratio = data.get("pb_ratio")
+            existing.market_cap = data.get("market_cap") if data.get("market_cap") and data.get("market_cap") > 0 else None
+            existing.eps_forecast = data.get("eps_forecast")
+            
+            if data.get("additional_data"):
+                existing.additional_data = json.dumps(data["additional_data"], ensure_ascii=False)
+            else:
+                existing.additional_data = None
+            
+            db.commit()
+            print(f"[市场数据] [单点校准] ✓ 成功覆盖记录 (日期: {date_obj})")
+            return {
+                "success": True,
+                "message": f"成功覆盖 {target_date} 的数据",
+                "data": {
+                    "date": target_date,
+                    "close_price": existing.close_price,
+                    "volume": existing.volume,
+                    "turnover_rate": existing.turnover_rate,
+                    "pe_ratio": existing.pe_ratio,
+                    "pb_ratio": existing.pb_ratio,
+                    "market_cap": existing.market_cap,
+                    "eps_forecast": existing.eps_forecast,
+                }
+            }
+        else:
+            # 创建新记录
+            print(f"[市场数据] [单点校准] 记录不存在，创建新记录...")
+            market_cap_val = data.get("market_cap")
+            if market_cap_val is not None and market_cap_val == 0:
+                market_cap_val = None
+            
+            market_data = MarketData(
+                asset_id=asset_id,
+                date=date_obj,
+                close_price=data["close_price"],
+                volume=data.get("volume"),
+                turnover_rate=data.get("turnover_rate"),
+                pe_ratio=data.get("pe_ratio"),
+                pb_ratio=data.get("pb_ratio"),
+                market_cap=market_cap_val,
+                eps_forecast=data.get("eps_forecast"),
+                additional_data=json.dumps(data.get("additional_data", {}), ensure_ascii=False) if data.get("additional_data") else None
+            )
+            db.add(market_data)
+            db.commit()
+            print(f"[市场数据] [单点校准] ✓ 成功创建新记录 (日期: {date_obj})")
+            return {
+                "success": True,
+                "message": f"成功创建 {target_date} 的数据",
+                "data": {
+                    "date": target_date,
+                    "close_price": market_data.close_price,
+                    "volume": market_data.volume,
+                    "turnover_rate": market_data.turnover_rate,
+                    "pe_ratio": market_data.pe_ratio,
+                    "pb_ratio": market_data.pb_ratio,
+                    "market_cap": market_data.market_cap,
+                    "eps_forecast": market_data.eps_forecast,
+                }
+            }
+            
+    except Exception as e:
+        error_msg = f"单点数据校准失败: {type(e).__name__}: {str(e)}"
+        print(f"[市场数据] [单点校准] ✗ {error_msg}")
+        traceback.print_exc()
+        db.rollback()
+        return {"success": False, "message": error_msg, "data": None}
+
+
 def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
     """
     更新资产数据 - 区分"今日"强制刷新和"历史"按需补全

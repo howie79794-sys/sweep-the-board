@@ -13,7 +13,7 @@ import traceback
 
 from database.config import get_db
 from database.models import User, Asset, MarketData, Ranking, PKPool, PKPoolAsset
-from services.market_data import update_asset_data, update_all_assets_data, get_latest_trading_date, calculate_stability_metrics
+from services.market_data import update_asset_data, update_all_assets_data, get_latest_trading_date, calculate_stability_metrics, custom_update_asset_data
 from services.ranking import save_rankings, get_or_set_baseline_price
 from services.storage import upload_avatar_file, delete_avatar, normalize_avatar_url
 from services.asset import AssetService
@@ -182,6 +182,12 @@ class DataUpdateRequest(BaseModel):
                 "force": False
             }
         }
+
+
+class CustomUpdateRequest(BaseModel):
+    """单点数据校准请求模型"""
+    asset_id: int = Field(description="资产ID")
+    target_date: str = Field(description="目标日期，格式：YYYY-MM-DD")
 
 
 class MarketDataResponse(BaseModel):
@@ -1179,6 +1185,53 @@ async def get_task_status(task_id: str):
         "result": task["result"],
         "created_at": task["created_at"],
     }
+
+
+@router.post("/data/custom-update", tags=["data"])
+async def custom_update_data(
+    request: CustomUpdateRequest,
+    db: Session = Depends(get_db)
+):
+    """单点数据校准：强制覆盖指定日期的数据"""
+    print(f"[API] ========== 收到单点数据校准请求 ==========")
+    print(f"[API] asset_id={request.asset_id}, target_date={request.target_date}")
+    
+    # 验证日期格式
+    try:
+        # 确保日期格式为 YYYY-MM-DD
+        target_date = request.target_date.strip()
+        # 尝试解析日期以验证格式
+        date.fromisoformat(target_date)
+    except ValueError as e:
+        error_msg = f"日期格式错误: {request.target_date}，必须是 YYYY-MM-DD 格式"
+        print(f"[API] ✗ {error_msg}")
+        raise HTTPException(status_code=422, detail=error_msg)
+    
+    try:
+        result = custom_update_asset_data(
+            asset_id=request.asset_id,
+            target_date=target_date,
+            db=db
+        )
+        
+        if result["success"]:
+            print(f"[API] ========== 单点数据校准成功 ==========")
+            return {
+                "success": True,
+                "message": result["message"],
+                "data": result["data"]
+            }
+        else:
+            print(f"[API] ========== 单点数据校准失败 ==========")
+            raise HTTPException(status_code=400, detail=result["message"])
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_msg = f"单点数据校准失败: {type(e).__name__}: {str(e)}"
+        print(f"[API] ✗ {error_msg}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=error_msg)
 
 
 @router.get("/data/charts/all", tags=["data"])

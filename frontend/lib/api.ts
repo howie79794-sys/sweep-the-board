@@ -241,6 +241,28 @@ export const dataAPI = {
       created_at: string;
     }>(`/api/data/task/${taskId}`)
   },
+  customUpdate: (assetId: number, targetDate: string) => {
+    return fetchAPI<{
+      success: boolean;
+      message: string;
+      data?: {
+        date: string;
+        close_price: number;
+        volume?: number;
+        turnover_rate?: number;
+        pe_ratio?: number;
+        pb_ratio?: number;
+        market_cap?: number;
+        eps_forecast?: number;
+      };
+    }>('/api/data/custom-update', {
+      method: 'POST',
+      body: JSON.stringify({
+        asset_id: assetId,
+        target_date: targetDate,
+      }),
+    })
+  },
 }
 
 // 排名API
