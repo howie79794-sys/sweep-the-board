@@ -25,6 +25,14 @@ export function CustomUpdateModal({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // 调试：检查资产数据
+  useEffect(() => {
+    if (isOpen) {
+      console.log('[CustomUpdateModal] 资产数据:', assets)
+      console.log('[CustomUpdateModal] 资产数量:', assets?.length || 0)
+    }
+  }, [isOpen, assets])
+
   // 初始化日期为今天（YYYY-MM-DD格式）
   useEffect(() => {
     if (isOpen && !targetDate) {
@@ -100,8 +108,8 @@ export function CustomUpdateModal({
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg p-6 w-full max-w-md">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={handleClose}>
+      <div className="bg-white rounded-lg p-6 w-full max-w-md shadow-xl" onClick={(e) => e.stopPropagation()}>
         <h2 className="text-xl font-bold mb-4">单点数据校准</h2>
         
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -113,17 +121,26 @@ export function CustomUpdateModal({
             <select
               value={selectedAssetId}
               onChange={(e) => setSelectedAssetId(e.target.value)}
-              className="w-full px-3 py-2 border rounded-md"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
               disabled={loading}
               required
             >
               <option value="">请选择资产</option>
-              {assets.map((asset) => (
-                <option key={asset.id} value={asset.id.toString()}>
-                  {asset.name} ({asset.code}) - {asset.user?.name || `用户ID: ${asset.user_id}`}
-                </option>
-              ))}
+              {assets && assets.length > 0 ? (
+                assets.map((asset) => (
+                  <option key={asset.id} value={asset.id.toString()}>
+                    {asset.name} ({asset.code}) - {asset.user?.name || `用户ID: ${asset.user_id}`}
+                  </option>
+                ))
+              ) : (
+                <option value="" disabled>暂无资产数据，请先在"资产管理"标签页创建资产</option>
+              )}
             </select>
+            {assets && assets.length === 0 && (
+              <p className="text-xs text-muted-foreground mt-1">
+                提示：请先在"资产管理"标签页创建资产
+              </p>
+            )}
           </div>
 
           {/* 日期选择器 */}

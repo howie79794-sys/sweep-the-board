@@ -48,6 +48,14 @@ export default function AdminPage() {
     }
   }, [])
 
+  // 打开单点数据校准弹窗时，确保资产数据已加载
+  const handleOpenCustomUpdateModal = () => {
+    if (!assets || assets.length === 0) {
+      loadAssets()
+    }
+    setShowCustomUpdateModal(true)
+  }
+
   useEffect(() => {
     if (activeTab === "users") {
       loadUsers()
@@ -843,7 +851,7 @@ export default function AdminPage() {
               </p>
               <div className="space-y-3">
                 <button
-                  onClick={() => setShowCustomUpdateModal(true)}
+                  onClick={handleOpenCustomUpdateModal}
                   className="px-6 py-3 bg-secondary text-secondary-foreground rounded hover:bg-secondary/90"
                 >
                   单点数据校准
@@ -903,7 +911,7 @@ export default function AdminPage() {
       <CustomUpdateModal
         isOpen={showCustomUpdateModal}
         onClose={() => setShowCustomUpdateModal(false)}
-        assets={assets}
+        assets={assets || []}
         onSuccess={() => {
           setToastMessage({ type: 'success', message: '数据校准成功！' })
           setTimeout(() => setToastMessage(null), 3000)
