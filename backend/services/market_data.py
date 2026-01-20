@@ -2031,19 +2031,18 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
         ).first()
         
         if existing_record:
-            # 检查数据是否完整
+            # 检查数据是否完整（包括价格、市盈率、市净率）
             has_price = existing_record.close_price is not None
-            has_metrics = (
-                (existing_record.pe_ratio is not None and existing_record.pe_ratio != 0) or
-                (existing_record.pb_ratio is not None and existing_record.pb_ratio != 0) or
-                (existing_record.market_cap is not None and existing_record.market_cap > 0)
-            )
+            has_pe = existing_record.pe_ratio is not None and existing_record.pe_ratio != 0
+            has_pb = existing_record.pb_ratio is not None and existing_record.pb_ratio != 0
+            has_metrics = has_pe or has_pb or (existing_record.market_cap is not None and existing_record.market_cap > 0)
             
-            if has_price and has_metrics:
-                # 数据完整，跳过
+            # 如果价格和财务指标都完整，跳过
+            if has_price and has_metrics and has_pe and has_pb:
+                # 数据完整（包括 PE 和 PB），跳过
                 skipped_count += 1
             else:
-                # 数据不完整，需要补全
+                # 数据不完整（缺少价格或缺少 PE/PB），需要补全
                 missing_dates.append(check_date)
         else:
             # 记录不存在，需要获取
@@ -2070,44 +2069,79 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
             ).first()
             
             if existing_record:
-                # 检查数据是否完整（核心指标：close_price 和 pe_ratio 等）
+                # 检查数据是否完整（核心指标：close_price、pe_ratio、pb_ratio）
                 has_price = existing_record.close_price is not None
-                has_metrics = (
-                    (existing_record.pe_ratio is not None and existing_record.pe_ratio != 0) or
-                    (existing_record.pb_ratio is not None and existing_record.pb_ratio != 0) or
-                    (existing_record.market_cap is not None and existing_record.market_cap > 0)
-                )
+                has_pe = existing_record.pe_ratio is not None and existing_record.pe_ratio != 0
+                has_pb = existing_record.pb_ratio is not None and existing_record.pb_ratio != 0
+                has_metrics = has_pe or has_pb or (existing_record.market_cap is not None and existing_record.market_cap > 0)
                 
-                if has_price and has_metrics:
-                    # 数据完整，跳过（优先查库）
+                if has_price and has_pe and has_pb:
+                    # 数据完整（包括价格、PE、PB），跳过（优先查库）
                     skipped_count += 1
                     if skipped_count % 50 == 0:
                         print(f"[市场数据] [历史缺失补全] 已跳过 {skipped_count} 条完整记录...")
-                elif has_price and not has_metrics:
-                    # 有价格但缺少财务指标，需要补全
-                    if ref_pe and ref_price and ref_price > 0:
-                        hist_price = existing_record.close_price
-                        price_ratio = hist_price / ref_price
+                elif has_price and (not has_pe or not has_pb):
+                    # 有价格但缺少 PE 或 PB，需要发起 API 请求补全（遵循 5 天限制）
+                    print(f"[市场数据] [历史缺失补全] 日期 {current_date} 缺少 PE/PB 指标，发起 API 请求补全...")
+                    try:
+                        hist_data_list = fetch_asset_data(
+                            code=asset.code,
+                            asset_type=asset.asset_type,
+                            start_date=current_date.isoformat(),
+                            end_date=current_date.isoformat(),
+                            db=db
+                        )
                         
-                        # 根据股价波动比例反推历史指标
-                        existing_record.pe_ratio = ref_pe * price_ratio
-                        if ref_pb:
-                            existing_record.pb_ratio = ref_pb * price_ratio
-                        if ref_market_cap:
-                            existing_record.market_cap = ref_market_cap * price_ratio
-                        if ref_eps:
-                            existing_record.eps_forecast = ref_eps  # EPS 保持不变
-                        
-                        filled_metrics_count += 1
-                        pe_str = f"{existing_record.pe_ratio:.2f}" if existing_record.pe_ratio is not None else "N/A"
-                        pb_str = f"{existing_record.pb_ratio:.2f}" if existing_record.pb_ratio is not None else "N/A"
-                        market_cap_str = f"{existing_record.market_cap:.2f}" if existing_record.market_cap is not None else "N/A"
-                        print(f"[市场数据] [历史缺失补全] 补全财务指标 (日期: {current_date}): PE={pe_str}, PB={pb_str}, 市值={market_cap_str}")
-                    else:
-                        print(f"[市场数据] [历史缺失补全] 警告: 日期 {current_date} 缺少财务指标，但无基准数据可反推")
+                        if hist_data_list and len(hist_data_list) > 0:
+                            hist_data = hist_data_list[0]
+                            
+                            # 如果 API 返回了财务指标，使用 API 的值；否则反推
+                            if hist_data.get("pe_ratio") is not None:
+                                existing_record.pe_ratio = hist_data.get("pe_ratio")
+                            elif not has_pe and ref_pe and ref_price and ref_price > 0:
+                                hist_price = existing_record.close_price
+                                price_ratio = hist_price / ref_price
+                                existing_record.pe_ratio = ref_pe * price_ratio
+                            
+                            if hist_data.get("pb_ratio") is not None:
+                                existing_record.pb_ratio = hist_data.get("pb_ratio")
+                            elif not has_pb and ref_pb and ref_price and ref_price > 0:
+                                hist_price = existing_record.close_price
+                                price_ratio = hist_price / ref_price
+                                existing_record.pb_ratio = ref_pb * price_ratio
+                            
+                            # 更新其他字段（如果 API 返回了）
+                            if hist_data.get("close_price") is not None:
+                                existing_record.close_price = hist_data.get("close_price")
+                            if hist_data.get("volume") is not None:
+                                existing_record.volume = hist_data.get("volume")
+                            if hist_data.get("turnover_rate") is not None:
+                                existing_record.turnover_rate = hist_data.get("turnover_rate")
+                            
+                            if hist_data.get("market_cap") is not None and hist_data.get("market_cap") > 0:
+                                existing_record.market_cap = hist_data.get("market_cap")
+                            elif ref_market_cap and ref_price and ref_price > 0:
+                                hist_price = existing_record.close_price
+                                price_ratio = hist_price / ref_price
+                                existing_record.market_cap = ref_market_cap * price_ratio
+                            
+                            if hist_data.get("eps_forecast") is not None:
+                                existing_record.eps_forecast = hist_data.get("eps_forecast")
+                            elif ref_eps:
+                                existing_record.eps_forecast = ref_eps
+                            
+                            if hist_data.get("additional_data"):
+                                existing_record.additional_data = json.dumps(hist_data.get("additional_data", {}), ensure_ascii=False)
+                            
+                            filled_metrics_count += 1
+                            pe_str = f"{existing_record.pe_ratio:.2f}" if existing_record.pe_ratio is not None else "N/A"
+                            pb_str = f"{existing_record.pb_ratio:.2f}" if existing_record.pb_ratio is not None else "N/A"
+                            print(f"[市场数据] [历史缺失补全] 补全 PE/PB 指标 (日期: {current_date}): PE={pe_str}, PB={pb_str}")
+                    except Exception as e:
+                        print(f"[市场数据] [历史缺失补全] 获取日期 {current_date} 的 PE/PB 数据失败: {type(e).__name__}: {str(e)}")
                 else:
                     # 价格也为空，需要获取数据
-                    print(f"[市场数据] [历史缺失补全] 日期 {current_date} 数据不完整，发起 API 请求...")
+                    print(f"[市场数据] [历史缺失补全] 日期 {current_date} 数据不完整（缺少价格），发起 API 请求...")
                     try:
                         hist_data_list = fetch_asset_data(
                             code=asset.code,
@@ -2155,9 +2189,11 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
                                     existing_record.additional_data = json.dumps(hist_data.get("additional_data", {}), ensure_ascii=False)
                                 
                                 filled_metrics_count += 1
-                                print(f"[市场数据] [历史缺失补全] 更新记录 (日期: {current_date}): 价格={hist_price}")
+                                pe_str = f"{existing_record.pe_ratio:.2f}" if existing_record.pe_ratio is not None else "N/A"
+                                pb_str = f"{existing_record.pb_ratio:.2f}" if existing_record.pb_ratio is not None else "N/A"
+                                print(f"[市场数据] [历史缺失补全] 更新记录 (日期: {current_date}): 价格={hist_price}, PE={pe_str}, PB={pb_str}")
                     except Exception as e:
-                        print(f"[市场数据] [历史缺失补全] 获取日期 {current_date} 数据失败: {type(e).__name__}")
+                        print(f"[市场数据] [历史缺失补全] 获取日期 {current_date} 数据失败: {type(e).__name__}: {str(e)}")
             else:
                 # 记录不存在，需要获取历史价格并补全财务指标（按需补全）
                 print(f"[市场数据] [历史缺失补全] 日期 {current_date} 记录不存在，发起 API 请求...")
