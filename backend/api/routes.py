@@ -1216,6 +1216,7 @@ async def custom_update_data(
         
         if result["success"]:
             print(f"[API] ========== 单点数据校准成功 ==========")
+            # 成功返回 200
             return {
                 "success": True,
                 "message": result["message"],
@@ -1223,7 +1224,11 @@ async def custom_update_data(
             }
         else:
             print(f"[API] ========== 单点数据校准失败 ==========")
-            raise HTTPException(status_code=400, detail=result["message"])
+            # 所有数据源都失败，返回 404
+            raise HTTPException(
+                status_code=404,
+                detail=result["message"] or "未能从任何数据源获取到数据"
+            )
             
     except HTTPException:
         raise
@@ -1231,6 +1236,7 @@ async def custom_update_data(
         error_msg = f"单点数据校准失败: {type(e).__name__}: {str(e)}"
         print(f"[API] ✗ {error_msg}")
         traceback.print_exc()
+        # 其他异常返回 500
         raise HTTPException(status_code=500, detail=error_msg)
 
 

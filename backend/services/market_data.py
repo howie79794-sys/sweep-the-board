@@ -1779,6 +1779,7 @@ def custom_update_asset_data(asset_id: int, target_date: str, db: Session) -> Di
     核心逻辑：
     1. 忽略现有的"三层过滤"逻辑，直接调用对应的数据源接口
     2. 强制覆盖：使用数据库 upsert 逻辑，如果该记录已存在，则用新抓取的值覆盖旧值
+    3. 多源互补：A股/ETF在yfinance失败时自动尝试AkShare
     
     Args:
         asset_id: 资产ID
@@ -1809,25 +1810,106 @@ def custom_update_asset_data(asset_id: int, target_date: str, db: Session) -> Di
     
     print(f"[市场数据] [单点校准] 资产信息: ID={asset.id}, 名称={asset.name}, 代码={asset.code}, 类型={asset.asset_type}")
     
+    # 计算日期范围：end_date 必须是 target_date 的次日（yfinance 要求）
+    end_date_obj = target_date_obj + timedelta(days=1)
+    end_date = end_date_obj.strftime('%Y-%m-%d')
+    print(f"[市场数据] [单点校准] 日期范围: {target_date} 至 {end_date} (end_date为次日)")
+    
     # 强制调用数据源接口（忽略所有过滤逻辑）
     print(f"[市场数据] [单点校准] 强制调用数据源接口获取 {target_date} 的数据...")
+    data = None
+    data_list = []
+    
     try:
-        # 直接调用 fetch_asset_data，传入相同的开始和结束日期
-        data_list = fetch_asset_data(
-            code=asset.code,
-            asset_type=asset.asset_type,
-            start_date=target_date,
-            end_date=target_date,
-            db=None  # 不传入 db，避免回退机制
-        )
+        # 1. 期货：直接使用 AkShare
+        if asset.asset_type == "futures" or is_futures_main_code(asset.code):
+            print(f"[市场数据] [单点校准] 期货代码，使用 AkShare")
+            df = fetch_futures_data_akshare(asset.code, target_date, end_date)
+            if df is not None and not df.empty:
+                # 解析为数据列表
+                data_list = parse_market_data(df, asset.asset_type, asset.code)
         
+        # 2. 股票/ETF：优先使用 yfinance，失败时尝试 AkShare（仅限A股）
+        elif asset.asset_type == "stock":
+            print(f"[市场数据] [单点校准] 股票/ETF代码，优先使用 yfinance")
+            
+            # 首先尝试 yfinance
+            try:
+                # 判断是否为A股：检查代码格式或 normalize 后的代码是否以6/0/3开头
+                normalized_code = normalize_stock_code(asset.code)
+                is_ashare = (
+                    is_a_share_code(asset.code) or 
+                    asset.code.upper().startswith(('SH', 'SZ')) or
+                    normalized_code.startswith(('6', '0', '3'))
+                )
+                if is_ashare:
+                    # 转换为 yfinance 格式
+                    yf_code = convert_to_yfinance_symbol(asset.code)
+                    print(f"[市场数据] [单点校准] A股代码，转换后: {asset.code} -> {yf_code}")
+                else:
+                    yf_code = asset.code
+                    print(f"[市场数据] [单点校准] 非A股代码，使用原始代码: {yf_code}")
+                
+                df = fetch_stock_data_yfinance(yf_code, target_date, end_date, use_realtime=False)
+                if df is not None and not df.empty:
+                    print(f"[市场数据] [单点校准] yfinance 成功获取数据")
+                    data_list = parse_market_data(df, asset.asset_type, asset.code)
+                else:
+                    print(f"[市场数据] [单点校准] yfinance 未获取到数据")
+            except Exception as e:
+                print(f"[市场数据] [单点校准] yfinance 获取失败: {type(e).__name__}: {str(e)}")
+            
+            # 如果 yfinance 失败且是 A 股，尝试 AkShare（多源互补）
+            if (not data_list or len(data_list) == 0) and is_ashare:
+                print(f"[市场数据] [单点校准] yfinance 失败，尝试使用 AkShare 进行二次校准...")
+                try:
+                    # 注意：fetch_stock_data_akshare 内部会调用 normalize_stock_code
+                    # 所以这里直接传入原始代码即可
+                    df = fetch_stock_data_akshare(asset.code, target_date, end_date)
+                    if df is not None and not df.empty:
+                        print(f"[市场数据] [单点校准] AkShare 成功获取数据")
+                        data_list = parse_market_data(df, asset.asset_type, asset.code)
+                    else:
+                        print(f"[市场数据] [单点校准] AkShare 也未获取到数据")
+                except Exception as e:
+                    print(f"[市场数据] [单点校准] AkShare 获取失败: {type(e).__name__}: {str(e)}")
+                    traceback.print_exc()
+        
+        # 3. 基金：使用 yfinance
+        elif asset.asset_type == "fund":
+            print(f"[市场数据] [单点校准] 基金代码，使用 yfinance")
+            if YFINANCE_AVAILABLE:
+                try:
+                    yf_code = convert_to_yfinance_symbol(asset.code) if is_a_share_code(asset.code) else asset.code
+                    df = fetch_stock_data_yfinance(yf_code, target_date, end_date, use_realtime=False)
+                    if df is not None and not df.empty:
+                        data_list = parse_market_data(df, asset.asset_type, asset.code)
+                except Exception as e:
+                    print(f"[市场数据] [单点校准] 基金数据获取失败: {type(e).__name__}: {str(e)}")
+        
+        # 检查是否获取到数据
         if not data_list or len(data_list) == 0:
+            error_msg = f"未能从任何数据源获取到 {target_date} 的数据（yfinance 和 AkShare 均失败）"
+            print(f"[市场数据] [单点校准] ✗ {error_msg}")
+            return {"success": False, "message": error_msg, "data": None}
+        
+        # 从数据列表中找到目标日期的数据
+        data = None
+        for item in data_list:
+            if item.get("date") == target_date:
+                data = item
+                break
+        
+        # 如果没找到精确匹配，取第一条（可能是日期格式问题）
+        if not data and len(data_list) > 0:
+            data = data_list[0]
+            print(f"[市场数据] [单点校准] 警告: 未找到精确日期匹配，使用第一条数据: {data.get('date')}")
+        
+        if not data:
             error_msg = f"未能从数据源获取到 {target_date} 的数据"
             print(f"[市场数据] [单点校准] ✗ {error_msg}")
             return {"success": False, "message": error_msg, "data": None}
         
-        # 取第一条数据（应该只有一条）
-        data = data_list[0]
         print(f"[市场数据] [单点校准] 成功获取数据: {data}")
         
         # 强制覆盖数据库记录（upsert）
