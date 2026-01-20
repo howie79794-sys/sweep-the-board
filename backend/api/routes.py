@@ -1,7 +1,7 @@
 """API路由
 专门存放 FastAPI 的各个接口路径（Endpoints）
 """
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Body
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Body, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
@@ -22,6 +22,41 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # 创建路由器
 router = APIRouter()
+
+# ==================== 任务追踪系统 ====================
+# 在内存中维护任务状态
+tasks: dict[str, dict] = {}
+
+def create_task() -> str:
+    """创建新任务并返回 task_id"""
+    task_id = str(uuid.uuid4())
+    tasks[task_id] = {
+        "id": task_id,
+        "status": "processing",  # processing/success/failed
+        "progress": {"completed": 0, "total": 0},
+        "error_msg": None,
+        "result": None,
+        "created_at": datetime.now().isoformat(),
+    }
+    return task_id
+
+def update_task_progress(task_id: str, completed: int, total: int):
+    """更新任务进度"""
+    if task_id in tasks:
+        tasks[task_id]["progress"]["completed"] = completed
+        tasks[task_id]["progress"]["total"] = total
+
+def complete_task(task_id: str, result: dict):
+    """标记任务为成功"""
+    if task_id in tasks:
+        tasks[task_id]["status"] = "success"
+        tasks[task_id]["result"] = result
+
+def fail_task(task_id: str, error_msg: str):
+    """标记任务为失败"""
+    if task_id in tasks:
+        tasks[task_id]["status"] = "failed"
+        tasks[task_id]["error_msg"] = error_msg
 
 
 # ==================== Pydantic 模型 ====================
@@ -945,12 +980,159 @@ async def get_baseline_price(asset_id: int, db: Session = Depends(get_db)):
     }
 
 
+def run_update_task(task_id: str, asset_ids: Optional[List[int]], force: bool):
+    """后台执行数据更新任务"""
+    # 创建新的数据库会话（BackgroundTasks 中不能使用 Depends）
+    db = next(get_db())
+    try:
+        print(f"[API] [任务 {task_id}] ========== 开始执行数据更新任务 ==========")
+        
+        # 如果 asset_ids 不为 None 且不为空列表，则更新指定资产
+        if asset_ids and len(asset_ids) > 0:
+            print(f"[API] [任务 {task_id}] 更新指定资产: {asset_ids}")
+            total = len(asset_ids)
+            update_task_progress(task_id, 0, total)
+            
+            results = []
+            for idx, asset_id in enumerate(asset_ids, 1):
+                print(f"[API] [任务 {task_id}] 处理资产 ID: {asset_id} ({idx}/{total})")
+                try:
+                    result = update_asset_data(asset_id, db, force)
+                    results.append({
+                        "asset_id": asset_id,
+                        **result
+                    })
+                except Exception as e:
+                    # 单个资产失败不影响整体
+                    error_msg = f"处理资产 {asset_id} 时发生异常: {type(e).__name__}: {str(e)}"
+                    print(f"[API] [任务 {task_id}] ✗ {error_msg}")
+                    traceback.print_exc()
+                    results.append({
+                        "asset_id": asset_id,
+                        "success": False,
+                        "message": error_msg,
+                        "stored_count": 0,
+                        "new_data_count": 0,
+                        "filled_metrics_count": 0
+                    })
+                
+                update_task_progress(task_id, idx, total)
+            
+            print(f"[API] [任务 {task_id}] 开始计算排名...")
+            # 计算排名
+            try:
+                today = date.today()
+                save_rankings(today, db)
+                print(f"[API] [任务 {task_id}] 排名计算完成")
+            except Exception as e:
+                print(f"[API] [任务 {task_id}] 警告: 计算排名时发生错误: {type(e).__name__}: {str(e)}")
+                traceback.print_exc()
+            
+            result = {
+                "message": "数据更新完成",
+                "results": results
+            }
+            complete_task(task_id, result)
+            print(f"[API] [任务 {task_id}] ========== 数据更新任务完成 ==========")
+        else:
+            print(f"[API] [任务 {task_id}] 更新所有资产")
+            # 获取所有资产数量
+            assets = db.query(Asset).all()
+            total = len(assets)
+            update_task_progress(task_id, 0, total)
+            
+            # 更新所有资产（外层包裹异常捕获，确保单个资产失败不会导致整个接口崩溃）
+            try:
+                # 修改 update_all_assets_data 以支持进度回调
+                results = {
+                    "total": total,
+                    "success": 0,
+                    "failed": 0,
+                    "details": []
+                }
+                
+                for idx, asset in enumerate(assets, 1):
+                    print(f"[API] [任务 {task_id}] -------- 处理资产 {idx}/{total}: {asset.name} (ID: {asset.id}) --------")
+                    try:
+                        result = update_asset_data(asset.id, db, force)
+                        if result["success"]:
+                            results["success"] += 1
+                        else:
+                            results["failed"] += 1
+                        results["details"].append({
+                            "asset_id": asset.id,
+                            "asset_name": asset.name,
+                            "result": result
+                        })
+                    except Exception as e:
+                        # 单个资产失败不应该导致整个批量更新崩溃
+                        results["failed"] += 1
+                        error_msg = f"处理资产时发生异常: {type(e).__name__}: {str(e)}"
+                        print(f"[API] [任务 {task_id}] ✗ 资产 {asset.name} 处理异常: {error_msg}")
+                        traceback.print_exc()
+                        results["details"].append({
+                            "asset_id": asset.id,
+                            "asset_name": asset.name,
+                            "result": {
+                                "success": False,
+                                "message": error_msg,
+                                "stored_count": 0,
+                                "new_data_count": 0,
+                                "filled_metrics_count": 0
+                            }
+                        })
+                    
+                    update_task_progress(task_id, idx, total)
+                
+            except Exception as e:
+                print(f"[API] [任务 {task_id}] 错误: 批量更新资产数据时发生异常: {type(e).__name__}: {str(e)}")
+                traceback.print_exc()
+                # 返回部分结果，而不是抛出异常
+                results = {
+                    "total": total,
+                    "success": 0,
+                    "failed": 0,
+                    "details": [],
+                    "error": f"批量更新过程中发生错误: {str(e)}"
+                }
+            
+            print(f"[API] [任务 {task_id}] 开始计算排名...")
+            # 计算排名（也包裹异常捕获）
+            try:
+                today = date.today()
+                save_rankings(today, db)
+                print(f"[API] [任务 {task_id}] 排名计算完成")
+            except Exception as e:
+                print(f"[API] [任务 {task_id}] 警告: 计算排名时发生错误: {type(e).__name__}: {str(e)}")
+                traceback.print_exc()
+                # 排名计算失败不影响数据更新结果
+            
+            result = {
+                "message": "所有资产数据更新完成",
+                **results
+            }
+            complete_task(task_id, result)
+            print(f"[API] [任务 {task_id}] ========== 数据更新任务完成 ==========")
+    except Exception as e:
+        error_msg = f"数据更新任务执行失败: {type(e).__name__}: {str(e)}"
+        print(f"[API] [任务 {task_id}] 错误: {error_msg}")
+        traceback.print_exc()
+        fail_task(task_id, error_msg)
+    finally:
+        # 确保数据库会话关闭
+        db.close()
+    finally:
+        # 确保数据库会话关闭
+        db.close()
+
+
 @router.post("/data/update", tags=["data"])
 async def trigger_update(
     request: DataUpdateRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
-    """触发数据更新（支持全部或指定资产）"""
+    """触发数据更新（支持全部或指定资产）- 异步模式"""
     print(f"[API] ========== 收到数据更新请求 ==========")
     print(f"[API] Received data: {request}")
     print(f"[API] 请求体类型: {type(request)}")
@@ -970,70 +1152,36 @@ async def trigger_update(
     
     print(f"[API] 解析后的参数: asset_ids={asset_ids} (类型: {type(asset_ids)}), force={force}")
     
-    try:
-        # 如果 asset_ids 不为 None 且不为空列表，则更新指定资产
-        if asset_ids and len(asset_ids) > 0:
-            print(f"[API] 更新指定资产: {asset_ids}")
-            # 更新指定资产
-            results = []
-            for asset_id in asset_ids:
-                print(f"[API] 处理资产 ID: {asset_id}")
-                result = update_asset_data(asset_id, db, force)
-                results.append({
-                    "asset_id": asset_id,
-                    **result
-                })
-            
-            print(f"[API] 开始计算排名...")
-            # 计算排名
-            today = date.today()
-            save_rankings(today, db)
-            print(f"[API] 排名计算完成")
-            
-            response = {
-                "message": "数据更新完成",
-                "results": results
-            }
-            print(f"[API] ========== 数据更新请求完成 ==========")
-            return response
-        else:
-            print(f"[API] 更新所有资产")
-            # 更新所有资产（外层包裹异常捕获，确保单个资产失败不会导致整个接口崩溃）
-            try:
-                result = update_all_assets_data(db, force)
-            except Exception as e:
-                print(f"[API] 错误: 批量更新资产数据时发生异常: {type(e).__name__}: {str(e)}")
-                traceback.print_exc()
-                # 返回部分结果，而不是抛出异常
-                result = {
-                    "total": 0,
-                    "success": 0,
-                    "failed": 0,
-                    "details": [],
-                    "error": f"批量更新过程中发生错误: {str(e)}"
-                }
-            
-            print(f"[API] 开始计算排名...")
-            # 计算排名（也包裹异常捕获）
-            try:
-                today = date.today()
-                save_rankings(today, db)
-                print(f"[API] 排名计算完成")
-            except Exception as e:
-                print(f"[API] 警告: 计算排名时发生错误: {type(e).__name__}: {str(e)}")
-                traceback.print_exc()
-                # 排名计算失败不影响数据更新结果
-            
-            response = {
-                "message": "所有资产数据更新完成",
-                **result
-            }
-            print(f"[API] ========== 数据更新请求完成 ==========")
-            return response
-    except Exception as e:
-        print(f"[API] 错误: 数据更新请求处理失败: {type(e).__name__}: {str(e)}")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"数据更新失败: {str(e)}")
+    # 创建任务
+    task_id = create_task()
+    print(f"[API] 创建任务: {task_id}")
+    
+    # 启动后台任务（不传递 db，在任务内部创建）
+    background_tasks.add_task(run_update_task, task_id, asset_ids, force)
+    
+    # 立即返回 task_id
+    return {
+        "task_id": task_id,
+        "message": "数据更新任务已启动",
+        "status": "processing"
+    }
+
+
+@router.get("/data/task/{task_id}", tags=["data"])
+async def get_task_status(task_id: str):
+    """查询任务状态"""
+    if task_id not in tasks:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    
+    task = tasks[task_id]
+    return {
+        "id": task["id"],
+        "status": task["status"],
+        "progress": task["progress"],
+        "error_msg": task["error_msg"],
+        "result": task["result"],
+        "created_at": task["created_at"],
+    }
 
 
 @router.get("/data/charts/all", tags=["data"])

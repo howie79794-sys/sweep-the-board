@@ -226,10 +226,20 @@ export const dataAPI = {
     console.log('[API] Sending data:', bodyString)
     console.log('[API] 发送数据更新请求 (对象):', requestBody)
     
-    return fetchAPI<any>('/api/data/update', {
+    return fetchAPI<{ task_id: string; message: string; status: string }>('/api/data/update', {
       method: 'POST',
       body: bodyString,
     })
+  },
+  getTaskStatus: (taskId: string) => {
+    return fetchAPI<{
+      id: string;
+      status: 'processing' | 'success' | 'failed';
+      progress: { completed: number; total: number };
+      error_msg?: string | null;
+      result?: any;
+      created_at: string;
+    }>(`/api/data/task/${taskId}`)
   },
 }
 

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { userAPI, assetAPI, dataAPI } from "@/lib/api"
 import { type User, type Asset } from "@/types"
 import { UserAvatar } from "@/components/UserAvatar"
@@ -28,6 +28,23 @@ export default function AdminPage() {
     name: "",
     is_core: false,
   })
+  const [updating, setUpdating] = useState(false)
+  const [updateProgress, setUpdateProgress] = useState<{ completed: number; total: number } | null>(null)
+  const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null)
+  
+  // 清理定时器
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current)
+      }
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     if (activeTab === "users") {
@@ -65,32 +82,108 @@ export default function AdminPage() {
 
   const handleUpdateData = async () => {
     try {
-      setLoading(true)
+      setUpdating(true)
       setError(null)
-      const result = await dataAPI.update()
-      // 构建详细的消息
-      let message = result.message || "数据更新完成"
-      if (result.total !== undefined) {
-        message += `\n总计: ${result.total}，成功: ${result.success}，失败: ${result.failed}`
-        if (result.details && result.details.length > 0) {
-          const failedDetails = result.details
-            .filter((d: any) => !d.result?.success)
-            .map((d: any) => `${d.asset_name}: ${d.result?.message || "失败"}`)
-          if (failedDetails.length > 0) {
-            message += `\n\n失败详情:\n${failedDetails.join('\n')}`
-          }
-        }
+      setUpdateProgress(null)
+      
+      // 启动更新任务
+      const response = await dataAPI.update()
+      const taskId = response.task_id
+      
+      if (!taskId) {
+        throw new Error("未收到任务ID")
       }
-      alert(message)
-      loadAssets()
+      
+      // 清理之前的定时器
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current)
+      }
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current)
+      }
+      
+      // 开始轮询任务状态
+      pollIntervalRef.current = setInterval(async () => {
+        try {
+          const taskStatus = await dataAPI.getTaskStatus(taskId)
+          
+          // 更新进度
+          if (taskStatus.progress) {
+            setUpdateProgress(taskStatus.progress)
+          }
+          
+          // 检查任务状态
+          if (taskStatus.status === 'success') {
+            if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
+            if (timeoutRef.current) clearTimeout(timeoutRef.current)
+            pollIntervalRef.current = null
+            timeoutRef.current = null
+            setUpdating(false)
+            setUpdateProgress(null)
+            
+            // 构建成功消息
+            const result = taskStatus.result
+            let message = result?.message || "数据更新完成"
+            if (result?.total !== undefined) {
+              message += `\n总计: ${result.total}，成功: ${result.success}，失败: ${result.failed}`
+              if (result.details && result.details.length > 0) {
+                const failedDetails = result.details
+                  .filter((d: any) => !d.result?.success)
+                  .map((d: any) => `${d.asset_name}: ${d.result?.message || "失败"}`)
+                if (failedDetails.length > 0) {
+                  message += `\n\n失败详情:\n${failedDetails.join('\n')}`
+                }
+              }
+            }
+            
+            // 显示成功提示
+            setToastMessage({ type: 'success', message })
+            
+            // 自动刷新数据
+            loadAssets()
+            
+            // 3秒后清除提示
+            setTimeout(() => setToastMessage(null), 3000)
+          } else if (taskStatus.status === 'failed') {
+            if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
+            if (timeoutRef.current) clearTimeout(timeoutRef.current)
+            pollIntervalRef.current = null
+            timeoutRef.current = null
+            setUpdating(false)
+            setUpdateProgress(null)
+            
+            const errorMsg = taskStatus.error_msg || "数据更新失败"
+            setError(errorMsg)
+            setToastMessage({ type: 'error', message: errorMsg })
+            
+            // 3秒后清除提示
+            setTimeout(() => setToastMessage(null), 3000)
+          }
+        } catch (err: any) {
+          console.error("轮询任务状态错误:", err)
+          // 轮询错误不中断，继续尝试
+        }
+      }, 3000) // 每3秒轮询一次
+      
+      // 设置超时（30分钟后停止轮询）
+      timeoutRef.current = setTimeout(() => {
+        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
+        pollIntervalRef.current = null
+        timeoutRef.current = null
+        setUpdating(false)
+        setUpdateProgress(null)
+        setError("任务超时，请刷新页面查看状态")
+      }, 30 * 60 * 1000)
+      
     } catch (err: any) {
       // 确保显示真实的错误信息
       const errorMsg = err?.message || err?.toString() || "更新数据失败"
       console.error("更新数据错误:", err)
       setError(errorMsg)
-      alert(`更新数据失败: ${errorMsg}`)
-    } finally {
-      setLoading(false)
+      setUpdating(false)
+      setUpdateProgress(null)
+      setToastMessage({ type: 'error', message: errorMsg })
+      setTimeout(() => setToastMessage(null), 3000)
     }
   }
 
@@ -746,13 +839,35 @@ export default function AdminPage() {
               <p className="text-muted-foreground mb-4">
                 从数据源获取最新数据并更新到数据库
               </p>
-              <button
-                onClick={handleUpdateData}
-                disabled={loading}
-                className="px-6 py-3 bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50"
-              >
-                {loading ? "更新中..." : "更新所有资产数据"}
-              </button>
+              <div className="space-y-3">
+                <button
+                  onClick={handleUpdateData}
+                  disabled={updating || loading}
+                  className="px-6 py-3 bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2"
+                >
+                  {updating && (
+                    <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                  )}
+                  {updating ? "更新中..." : "更新所有资产数据"}
+                </button>
+                {updating && updateProgress && (
+                  <div className="text-sm text-muted-foreground">
+                    <div className="flex items-center justify-between mb-1">
+                      <span>进度: {updateProgress.completed} / {updateProgress.total}</span>
+                      <span>{updateProgress.total > 0 ? Math.round((updateProgress.completed / updateProgress.total) * 100) : 0}%</span>
+                    </div>
+                    <div className="w-full bg-secondary rounded-full h-2">
+                      <div
+                        className="bg-primary h-2 rounded-full transition-all duration-300"
+                        style={{ width: `${updateProgress.total > 0 ? (updateProgress.completed / updateProgress.total) * 100 : 0}%` }}
+                      ></div>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="border rounded-lg p-6">
@@ -772,6 +887,26 @@ export default function AdminPage() {
                 </div>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Toast 提示 */}
+      {toastMessage && (
+        <div
+          className={cn(
+            "fixed bottom-4 right-4 px-6 py-4 rounded-lg shadow-lg z-50 max-w-md",
+            toastMessage.type === 'success' ? "bg-green-500 text-white" : "bg-red-500 text-white"
+          )}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex-1 whitespace-pre-line">{toastMessage.message}</div>
+            <button
+              onClick={() => setToastMessage(null)}
+              className="ml-4 text-white hover:text-gray-200"
+            >
+              ✕
+            </button>
           </div>
         </div>
       )}
