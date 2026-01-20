@@ -46,6 +46,56 @@ def is_trading_hours() -> bool:
     return market_open <= current_time <= market_close
 
 
+def is_trading_day(target_date: date) -> bool:
+    """
+    判断指定日期是否为交易日（北京时间）
+    
+    规则：
+    1. 周末（周六、周日）不是交易日
+    2. 法定节假日不是交易日（通过数据库历史数据判断，如果没有历史数据则默认是交易日）
+    3. 工作日且非节假日 = 交易日
+    
+    Args:
+        target_date: 目标日期
+    
+    Returns:
+        bool: True 表示是交易日，False 表示非交易日
+    """
+    weekday = target_date.weekday()  # 0=Monday, 6=Sunday
+    
+    # 周末不是交易日
+    if weekday >= 5:  # 5=Saturday, 6=Sunday
+        return False
+    
+    # 工作日默认是交易日
+    # 注：如需精确判断法定节假日，可使用 chinese_calendar 库
+    # 当前实现：工作日默认是交易日
+    return True
+
+
+def should_skip_api_request(target_date: date, db: Optional[Session] = None, asset_id: Optional[int] = None) -> bool:
+    """
+    判断是否应该跳过 API 请求（日历过滤层）
+    
+    规则：
+    - 非交易日不发起 API 请求，直接读库
+    
+    Args:
+        target_date: 目标日期
+        db: 数据库会话（可选）
+        asset_id: 资产ID（可选）
+    
+    Returns:
+        bool: True 表示应该跳过 API 请求，False 表示应该发起请求
+    """
+    # 非交易日跳过 API 请求
+    if not is_trading_day(target_date):
+        print(f"[市场数据] [日历过滤] 日期 {target_date} 是非交易日（周末），跳过 API 请求，直接读库")
+        return True
+    
+    return False
+
+
 def get_latest_trading_date(db: Session, asset_id: Optional[int] = None) -> date:
     """
     获取最新交易日（北京时间）
@@ -515,7 +565,7 @@ def fetch_stock_data_akshare(code: str, start_date: str, end_date: str) -> Optio
 
 def resolve_futures_main_contract(code: str) -> Optional[str]:
     """
-    解析期货主力合约代码
+    解析期货主力合约代码（使用 ak.futures_main_relation 识别主力）
     输入格式：IF0, IF=F, CF.IF0, IC, IM0, IH 等
     输出：主力合约代码或指数代码（如 IF88 表示连续合约指数）
     """
@@ -543,7 +593,28 @@ def resolve_futures_main_contract(code: str) -> Optional[str]:
     
     print(f"[市场数据] [akshare] 解析期货代码: 输入={code}, 基础代码={base_symbol}")
     
-    # 股指期货连续合约代码映射
+    # 尝试使用 futures_main_relation 获取主力合约
+    try:
+        # 获取主力合约关系表
+        main_relation_df = ak.futures_main_relation(symbol=base_symbol)
+        if main_relation_df is not None and not main_relation_df.empty:
+            # 尝试获取主力合约代码
+            # 主力合约关系表通常包含 'symbol', 'main_contract' 等列
+            # 获取最新的主力合约
+            if 'main_contract' in main_relation_df.columns:
+                main_contract = main_relation_df['main_contract'].iloc[-1]
+                if main_contract:
+                    print(f"[市场数据] [akshare] 通过 futures_main_relation 获取主力合约: {main_contract}")
+                    return main_contract
+            elif '合约' in main_relation_df.columns:
+                main_contract = main_relation_df['合约'].iloc[-1]
+                if main_contract:
+                    print(f"[市场数据] [akshare] 通过 futures_main_relation 获取主力合约: {main_contract}")
+                    return main_contract
+    except Exception as e:
+        print(f"[市场数据] [akshare] futures_main_relation 获取失败，使用备用映射: {str(e)}")
+    
+    # 备用方案：使用连续合约代码映射
     # 88 表示加权连续合约，89 表示近月连续合约
     index_mapping = {
         "IF": "IF88",  # 沪深300股指期货连续合约
@@ -554,7 +625,7 @@ def resolve_futures_main_contract(code: str) -> Optional[str]:
     
     if base_symbol in index_mapping:
         main_contract = index_mapping[base_symbol]
-        print(f"[市场数据] [akshare] 使用连续合约: {main_contract}")
+        print(f"[市场数据] [akshare] 使用连续合约（备用方案）: {main_contract}")
         return main_contract
     
     print(f"[市场数据] [akshare] 未找到映射: symbol={base_symbol}")
@@ -1432,7 +1503,11 @@ def fetch_asset_data(
     db: Optional[Session] = None
 ) -> List[Dict]:
     """
-    获取资产数据（统一接口）
+    获取资产数据（统一接口 - 重构后的路由逻辑）
+    
+    路由策略：
+    - Stock/ETF (asset_type == 'stock'): 使用 yfinance，国内代码强制转换后缀（.SS/.SZ）
+    - Futures (asset_type == 'futures'): 强制使用 AkShare，通过 futures_main_relation 识别主力
     
     Args:
         code: 资产代码（支持多种格式：SH601727, 601727.SH, 601727 等）
@@ -1457,75 +1532,105 @@ def fetch_asset_data(
     
     try:
         df = None
+        beijing_time = get_beijing_time()
+        today = beijing_time.date()
+        
+        # 安全地解析日期
         try:
-            beijing_time = get_beijing_time()
-            today = beijing_time.date()
-            
-            # 安全地解析日期
-            try:
-                if isinstance(end_date, str):
-                    end_date_obj = date.fromisoformat(end_date)
-                elif isinstance(end_date, date):
-                    end_date_obj = end_date
-                else:
-                    print(f"[市场数据] 错误: 不支持的 end_date 类型: {type(end_date)}")
-                    return []
-            except ValueError as e:
-                print(f"[市场数据] 错误: 无法解析 end_date: {end_date}, 错误: {str(e)}")
+            if isinstance(end_date, str):
+                end_date_obj = date.fromisoformat(end_date)
+            elif isinstance(end_date, date):
+                end_date_obj = end_date
+            else:
+                print(f"[市场数据] 错误: 不支持的 end_date 类型: {type(end_date)}")
                 return []
+        except ValueError as e:
+            print(f"[市场数据] 错误: 无法解析 end_date: {end_date}, 错误: {str(e)}")
+            return []
+        
+        # ========== 路由逻辑 ==========
+        # 1. Futures 路由：asset_type == 'futures' 强制使用 AkShare
+        if asset_type == "futures" or is_futures_main_code(code):
+            print(f"[市场数据] [路由] 期货代码，强制使用 AkShare")
+            try:
+                df = fetch_futures_data_akshare(code, start_date, end_date)
+                if df is None or df.empty:
+                    print(f"[市场数据] [路由] AkShare 期货接口未获取到数据")
+            except Exception as e:
+                print(f"[市场数据] [路由] 获取期货数据时发生异常: {type(e).__name__}: {str(e)}")
+                traceback.print_exc()
+                df = None
+        
+        # 2. Stock/ETF 路由：asset_type == 'stock' 使用 yfinance，国内代码强制转换后缀
+        elif asset_type == "stock":
+            print(f"[市场数据] [路由] 股票/ETF 代码，使用 yfinance（国内代码强制转换后缀）")
             
-            # 强制期货代码使用 AkShare（即使 asset_type 不是 futures）
-            if is_futures_main_code(code) or asset_type == "futures":
-                print(f"[市场数据] 检测到期货代码，强制使用 AkShare 期货接口")
-                try:
-                    df = fetch_futures_data_akshare(code, start_date, end_date)
-                except Exception as e:
-                    print(f"[市场数据] 错误: 获取期货数据时发生异常: {type(e).__name__}: {str(e)}")
-                    traceback.print_exc()
-                    df = None
-            # 如果查询的是今天的数据，且是股票类型，且有数据库会话，使用回退机制
-            elif asset_type == "stock" and end_date_obj == today and db is not None:
-                print(f"[市场数据] 查询今天的数据，使用回退机制")
+            # 如果是今天的数据且有数据库会话，先尝试使用回退机制
+            if end_date_obj == today and db is not None:
+                print(f"[市场数据] [路由] 查询今天的数据，尝试回退机制")
                 try:
                     df = fetch_stock_data_with_fallback(code, today, db)
+                    if df is not None and not df.empty:
+                        print(f"[市场数据] [路由] 回退机制成功获取数据")
                 except Exception as e:
-                    print(f"[市场数据] 错误: 回退机制执行时发生异常: {type(e).__name__}: {str(e)}")
+                    print(f"[市场数据] [路由] 回退机制执行时发生异常: {type(e).__name__}: {str(e)}")
                     traceback.print_exc()
                     df = None
-            elif asset_type == "stock":
+            
+            # 如果回退机制失败或不是今天的数据，使用 yfinance
+            if df is None or df.empty:
                 try:
-                    df = fetch_stock_data(code, start_date, end_date)
-                except YFinanceRateLimitError as e:
-                    print(f"[市场数据] 触发 yfinance 限频，尝试降级: {str(e)}")
+                    # 国内代码强制转换后缀（.SS/.SZ），修复 404 无法识别的问题
                     if is_domestic_code(code):
-                        df = fetch_stock_data_akshare(code, start_date, end_date)
+                        # 确保代码格式正确，转换为 yfinance 格式
+                        yf_symbol = convert_to_yfinance_symbol(code)
+                        print(f"[市场数据] [路由] 国内代码转换: {code} -> {yf_symbol}")
+                        df = fetch_stock_data_yfinance(yf_symbol, start_date, end_date, use_realtime=(end_date_obj == today))
+                    else:
+                        # 非国内代码直接使用 yfinance
+                        df = fetch_stock_data_yfinance(code, start_date, end_date, use_realtime=(end_date_obj == today))
+                    
+                    if df is None or df.empty:
+                        print(f"[市场数据] [路由] yfinance 未获取到数据")
+                except YFinanceRateLimitError as e:
+                    print(f"[市场数据] [路由] yfinance 触发限频，自动降级到 AkShare: {str(e)}")
+                    # RateLimitError 且为国内资产，自动尝试 AkShare 备选路径
+                    if is_domestic_code(code):
+                        try:
+                            df = fetch_stock_data_akshare(code, start_date, end_date)
+                            if df is not None and not df.empty:
+                                print(f"[市场数据] [路由] 降级到 AkShare 成功获取数据")
+                        except Exception as ak_e:
+                            print(f"[市场数据] [路由] AkShare 备选路径也失败: {type(ak_e).__name__}: {str(ak_e)}")
+                    # 如果 AkShare 也失败，尝试从缓存读取
                     if (df is None or df.empty) and db is not None:
                         df = fetch_cached_market_data(code, start_date, end_date, db)
+                        if df is not None and not df.empty:
+                            print(f"[市场数据] [路由] 从数据库缓存读取数据")
                 except Exception as e:
-                    print(f"[市场数据] 错误: 获取股票数据时发生异常: {type(e).__name__}: {str(e)}")
+                    print(f"[市场数据] [路由] 获取股票数据时发生异常: {type(e).__name__}: {str(e)}")
                     traceback.print_exc()
-                    df = None
-            elif asset_type == "fund":
-                try:
-                    df = fetch_fund_data(code, start_date, end_date)
-                except Exception as e:
-                    print(f"[市场数据] 错误: 获取基金数据时发生异常: {type(e).__name__}: {str(e)}")
-                    traceback.print_exc()
-                    df = None
-            else:
-                print(f"[市场数据] 错误: 不支持的资产类型: {asset_type}")
-                return []
-        except TimeoutError as e:
-            print(f"[市场数据] 错误: 获取资产数据超时: {str(e)}")
-            traceback.print_exc()
-            return []
-        except ValueError as e:
-            print(f"[市场数据] 错误: 值错误: {str(e)}")
-            traceback.print_exc()
-            return []
-        except Exception as e:
-            print(f"[市场数据] 错误: 获取资产数据时发生未预期的异常: {type(e).__name__}: {str(e)}")
-            traceback.print_exc()
+                    # 异常情况下，如果是国内代码，尝试 AkShare 备选
+                    if is_domestic_code(code):
+                        try:
+                            df = fetch_stock_data_akshare(code, start_date, end_date)
+                        except:
+                            pass
+                    # 如果仍然失败，尝试从缓存读取
+                    if (df is None or df.empty) and db is not None:
+                        df = fetch_cached_market_data(code, start_date, end_date, db)
+        
+        # 3. Fund 路由
+        elif asset_type == "fund":
+            print(f"[市场数据] [路由] 基金代码")
+            try:
+                df = fetch_fund_data(code, start_date, end_date)
+            except Exception as e:
+                print(f"[市场数据] [路由] 获取基金数据时发生异常: {type(e).__name__}: {str(e)}")
+                traceback.print_exc()
+                df = None
+        else:
+            print(f"[市场数据] [路由] 错误: 不支持的资产类型: {asset_type}")
             return []
         
         if df is None or df.empty:
@@ -1744,11 +1849,21 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
         
         print(f"[市场数据] 基准财务指标 (日期: {ref_date}): PE={ref_pe}, PB={ref_pb}, 市值={ref_market_cap}, EPS={ref_eps}, 价格={ref_price}")
     
-    # ========== 第一步：处理"今日"数据（强制刷新） ==========
+    # ========== 第一步：处理"今日"数据（强制刷新 - 15:30分界） ==========
     print(f"[市场数据] ========== 【今日实时覆盖】开始处理今日数据 ({today}) ==========")
     
+    # 判断是否在交易时间内（15:30之前为实时，之后为收盘价）
+    in_trading_hours = is_trading_hours()
+    beijing_time = get_beijing_time()
+    current_time_str = beijing_time.strftime("%H:%M")
+    
+    if in_trading_hours:
+        print(f"[市场数据] [今日实时覆盖] 当前时间 {current_time_str} 在交易时间内（15:30之前），更新实时价格和成交额")
+    else:
+        print(f"[市场数据] [今日实时覆盖] 当前时间 {current_time_str} 已收盘（15:30之后），视为收盘价并存库")
+    
     try:
-        # 强制发起 API 请求获取今日数据
+        # 今日数据必须发起 API 请求
         print(f"[市场数据] [今日实时覆盖] 强制发起 API 请求获取今日数据...")
         today_data_list = fetch_asset_data(
             code=asset.code,
@@ -1889,18 +2004,65 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
         except Exception as e:
             print(f"[市场数据] [今日实时覆盖] 更新基准财务指标时发生异常: {str(e)}")
     
-    # ========== 第二步：处理"历史"数据（按需补全） ==========
-    print(f"[市场数据] ========== 【历史缺失补全】开始处理历史数据 ==========")
+    # ========== 第二步：处理"历史"数据（按需补全 - 三层过滤策略） ==========
+    print(f"[市场数据] ========== 【历史缺失补全】开始处理历史数据（三层过滤策略） ==========")
     
-    # 遍历日期范围内的每一天（不包括今日，今日已在上面处理）
-    current_date = baseline_date_obj
-    while current_date < today:  # 注意：使用 < 而不是 <=
-        # 跳过周末（非交易日）
-        if current_date.weekday() >= 5:  # 5=Saturday, 6=Sunday
-            current_date += timedelta(days=1)
+    # 第一层：查找缺失的历史日期（仅查找最近5天的缺失日期，防止无限回溯）
+    missing_dates = []
+    MAX_BACKTRACK_DAYS = 5  # 最多回溯5天
+    
+    # 从今天往前找缺失的日期
+    check_date = today - timedelta(days=1)
+    days_checked = 0
+    
+    while check_date >= baseline_date_obj and days_checked < MAX_BACKTRACK_DAYS:
+        # 第二层：日历过滤 - 非交易日跳过，直接读库
+        if not is_trading_day(check_date):
+            print(f"[市场数据] [三层过滤] 日期 {check_date} 是非交易日，跳过 API 请求，直接读库")
+            check_date -= timedelta(days=1)
             continue
         
+        days_checked += 1
+        
+        # 检查该日期是否已存在且数据完整
+        existing_record = db.query(MarketData).filter(
+            MarketData.asset_id == asset_id,
+            MarketData.date == check_date
+        ).first()
+        
+        if existing_record:
+            # 检查数据是否完整
+            has_price = existing_record.close_price is not None
+            has_metrics = (
+                (existing_record.pe_ratio is not None and existing_record.pe_ratio != 0) or
+                (existing_record.pb_ratio is not None and existing_record.pb_ratio != 0) or
+                (existing_record.market_cap is not None and existing_record.market_cap > 0)
+            )
+            
+            if has_price and has_metrics:
+                # 数据完整，跳过
+                skipped_count += 1
+            else:
+                # 数据不完整，需要补全
+                missing_dates.append(check_date)
+        else:
+            # 记录不存在，需要获取
+            missing_dates.append(check_date)
+        
+        check_date -= timedelta(days=1)
+    
+    print(f"[市场数据] [三层过滤] 找到 {len(missing_dates)} 个缺失日期（最多回溯 {MAX_BACKTRACK_DAYS} 天）")
+    
+    # 遍历缺失的日期，发起 API 请求补全
+    for current_date in missing_dates:
+        
         try:
+            # 第三层：日历过滤 - 确保是交易日才发起 API 请求
+            if should_skip_api_request(current_date, db, asset_id):
+                # 非交易日，跳过 API 请求，直接读库
+                skipped_count += 1
+                continue
+            
             # 检查该日期是否已存在记录
             existing_record = db.query(MarketData).filter(
                 MarketData.asset_id == asset_id,
@@ -2063,9 +2225,6 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
             # 单个日期处理失败不应该导致整个资产更新失败
             print(f"[市场数据] [历史缺失补全] 警告: 处理日期 {current_date} 时发生异常: {type(e).__name__}: {str(e)}")
             traceback.print_exc()
-        
-        # 移动到下一天
-        current_date += timedelta(days=1)
     
     # 提交所有更改
     try:
