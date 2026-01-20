@@ -1048,8 +1048,8 @@ async def get_all_assets_chart_data(
     start_date_obj = date.fromisoformat(start_date) if start_date else baseline_date_obj
     end_date_obj = date.fromisoformat(end_date) if end_date else date.today()
     
-    # 获取所有活跃资产
-    assets = db.query(Asset).join(User).filter(User.is_active == True).all()
+    # 获取所有活跃的核心资产
+    assets = db.query(Asset).join(User).filter(User.is_active == True, Asset.is_core == True).all()
     
     result = []
     for asset in assets:
@@ -1196,8 +1196,8 @@ async def get_snapshot_data(db: Session = Depends(get_db)):
     # 获取最新交易日
     latest_trading_date = get_latest_trading_date(db)
     
-    # 获取所有活跃资产
-    assets = db.query(Asset).join(User).filter(User.is_active == True).all()
+    # 获取所有活跃的核心资产
+    assets = db.query(Asset).join(User).filter(User.is_active == True, Asset.is_core == True).all()
     
     baseline_date_obj = date.fromisoformat(BASELINE_DATE) if isinstance(BASELINE_DATE, str) else BASELINE_DATE
     
@@ -1299,10 +1299,11 @@ async def get_rankings(
         else:
             target_date = latest_ranking
     
-    # 获取资产排名（包含有排名和没有排名的）
-    asset_rankings_query = db.query(Ranking).filter(
+    # 获取资产排名（包含有排名和没有排名的），只返回核心资产
+    asset_rankings_query = db.query(Ranking).join(Asset).filter(
         Ranking.date == target_date,
-        Ranking.rank_type == "asset_rank"
+        Ranking.rank_type == "asset_rank",
+        Asset.is_core == True
     )
     
     # 先按有排名的排序，然后是没有排名的
@@ -1310,10 +1311,11 @@ async def get_rankings(
         Ranking.asset_rank.asc().nullslast()
     ).all()
     
-    # 获取用户排名（包含有排名和没有排名的）
-    user_rankings_query = db.query(Ranking).filter(
+    # 获取用户排名（包含有排名和没有排名的），只返回核心资产
+    user_rankings_query = db.query(Ranking).join(Asset).filter(
         Ranking.date == target_date,
-        Ranking.rank_type == "user_rank"
+        Ranking.rank_type == "user_rank",
+        Asset.is_core == True
     )
     
     # 去重，每个用户只返回一条（取第一个）

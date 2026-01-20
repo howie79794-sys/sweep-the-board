@@ -108,7 +108,7 @@ export function DragonTigerBoard({ className }: DragonTigerBoardProps) {
 
   return (
     <div className={cn("space-y-4", className)}>
-      <h2 className="text-2xl font-bold">龙虎榜</h2>
+      <h2 className="text-2xl font-bold">核心资产龙虎榜</h2>
       <div className="flex flex-wrap gap-6 justify-center">
         {userRankingsWithAssets.map((ranking, index) => {
           const rank = ranking.user_rank

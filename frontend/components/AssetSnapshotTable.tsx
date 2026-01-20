@@ -144,7 +144,7 @@ export function AssetSnapshotTable({ className }: { className?: string }) {
   return (
     <div className={cn("w-full overflow-x-auto", className)}>
       <div className="mb-4">
-        <h3 className="text-lg font-semibold">资产分析明细表</h3>
+        <h3 className="text-lg font-semibold">核心资产明细表</h3>
       </div>
       <table className="w-full border-collapse">
         <thead>

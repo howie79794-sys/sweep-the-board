@@ -9,7 +9,7 @@ import { AssetSnapshotTable } from "@/components/AssetSnapshotTable"
 export default function Home() {
   return (
     <div className="space-y-8 p-6">
-      {/* 龙虎榜 */}
+      {/* 核心资产龙虎榜 */}
       <div>
         <DragonTigerBoard />
       </div>
@@ -34,7 +34,7 @@ export default function Home() {
         <PBRatioChart />
       </div>
 
-      {/* 资产分析明细表 */}
+      {/* 核心资产明细表 */}
       <div className="border rounded-lg p-6">
         <AssetSnapshotTable />
       </div>
