@@ -1121,9 +1121,6 @@ def run_update_task(task_id: str, asset_ids: Optional[List[int]], force: bool):
     finally:
         # 确保数据库会话关闭
         db.close()
-    finally:
-        # 确保数据库会话关闭
-        db.close()
 
 
 @router.post("/data/update", tags=["data"])
