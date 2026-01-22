@@ -1396,15 +1396,24 @@ def fetch_fund_data(code: str, start_date: str, end_date: str) -> Optional[pd.Da
         print(f"[市场数据] [基金] 尝试净值数据接口")
         try:
             # 使用 ak.fund_open_fund_info_em 获取基金净值数据
-            # 根据 AkShare 最新版本，该函数使用位置参数：基金代码, indicator
+            # 根据 AkShare 最新版本，尝试使用 symbol 参数（如果失败则使用位置参数）
             # indicator 可选值："单位净值走势", "累计净值走势", "累计收益率走势", "同类排名走势", "同类平均走势"
-            df = ak.fund_open_fund_info_em(normalized_code, "单位净值走势")
+            try:
+                df = ak.fund_open_fund_info_em(symbol=normalized_code, indicator="单位净值走势")
+            except TypeError:
+                # 如果 symbol 参数失败，尝试位置参数
+                df = ak.fund_open_fund_info_em(normalized_code, "单位净值走势")
             
             if df is not None and not df.empty:
-                # 标准化列名（根据实际返回的列名调整）
-                # 通常返回的列名可能是：日期、单位净值、日增长率等
-                if '日期' in df.columns:
+                print(f"[市场数据] [基金] 获取到原始数据 {len(df)} 条，列名: {df.columns.tolist()}")
+                
+                # 立即执行字段重命名（根据 AkShare 实际返回的列名）
+                # 可能的列名：净值日期、日期、单位净值、净值等
+                if '净值日期' in df.columns:
+                    df = df.rename(columns={'净值日期': 'date'})
+                elif '日期' in df.columns:
                     df = df.rename(columns={'日期': 'date'})
+                
                 if '单位净值' in df.columns:
                     df = df.rename(columns={'单位净值': 'close'})
                 elif '净值' in df.columns:
@@ -1413,8 +1422,10 @@ def fetch_fund_data(code: str, start_date: str, end_date: str) -> Optional[pd.Da
                 # 确保日期格式正确
                 if 'date' in df.columns:
                     df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
-                    # 过滤日期范围
+                    # 强制执行日期过滤（接口返回全量数据，必须过滤）
+                    print(f"[市场数据] [基金] 执行日期过滤: {start_date} 至 {end_date}")
                     df = df[(df['date'] >= start_date) & (df['date'] <= end_date)]
+                    print(f"[市场数据] [基金] 过滤后数据: {len(df)} 条")
                 
                 if df is not None and not df.empty:
                     # 净值数据通常只有日期和净值，需要补充其他字段
@@ -2782,12 +2793,12 @@ def calculate_stability_metrics(asset_id: int, db: Session) -> Dict:
         
         # 检查收益率数据是否有效
         if len(log_returns) == 0:
-            print(f"[市场数据] [稳健度计算] 无法计算收益率，优雅降级")
+            print(f"[市场数据] [稳健度计算] 无法计算收益率，数据积累中，返回默认值")
             return {
                 "stability_score": 0.0,
                 "annual_volatility": 0.0,
                 "daily_returns": [],
-                "remark": "数据样本不足，待积累"
+                "remark": "数据积累中"
             }
         
         # 计算年化波动率: σ_annual = std(r) × sqrt(252)
