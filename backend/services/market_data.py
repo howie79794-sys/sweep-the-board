@@ -1307,8 +1307,11 @@ def fetch_stock_data(code: str, start_date: str, end_date: str) -> Optional[pd.D
 
 def fetch_fund_data(code: str, start_date: str, end_date: str) -> Optional[pd.DataFrame]:
     """
-    获取基金/ETF数据
-    基金数据暂时使用 yfinance 或 baostock，后续可以根据需要扩展
+    获取基金/ETF数据（强制使用 AkShare）
+    
+    接口适配策略：
+    1. 如果是6位数字代码（如 518880），先尝试 ak.fund_etf_hist_sina 获取场内数据
+    2. 若失败，则尝试 ak.fund_open_fund_info_em 获取净值数据
     
     Args:
         code: 基金代码
@@ -1318,45 +1321,117 @@ def fetch_fund_data(code: str, start_date: str, end_date: str) -> Optional[pd.Da
     Returns:
         pd.DataFrame 或 None（失败时）
     """
+    if not AKSHARE_AVAILABLE:
+        print(f"[市场数据] [基金] AkShare 不可用，无法获取基金数据")
+        return None
+    
     start_date = normalize_date_str(start_date)
     end_date = normalize_date_str(end_date)
-    print(f"[市场数据] 开始获取基金数据: code={code}, start_date={start_date}, end_date={end_date}")
+    print(f"[市场数据] [基金] 开始获取基金数据: code={code}, start_date={start_date}, end_date={end_date}")
     
-    # 基金数据暂时使用股票数据的获取方式（ETF 可以用 yfinance）
-    # 尝试 yfinance
-    if YFINANCE_AVAILABLE:
+    # 标准化代码（去除前缀后缀）
+    normalized_code = normalize_stock_code(code)
+    
+    # 判断是否为6位数字代码
+    is_six_digit = len(normalized_code) == 6 and normalized_code.isdigit()
+    
+    df = None
+    
+    # 策略1: 如果是6位数字代码，先尝试场内ETF数据
+    if is_six_digit:
+        print(f"[市场数据] [基金] 检测到6位数字代码，先尝试场内ETF数据接口")
         try:
-            # 转换为 yfinance 格式
-            symbol = convert_to_yfinance_symbol(code)
-            ticker = yf.Ticker(symbol)
-            df = ticker.history(start=start_date, end=end_date)
+            # 使用 ak.fund_etf_hist_sina 获取场内ETF数据
+            # 参数：symbol (基金代码), period (周期: "daily", "weekly", "monthly"), adjust (复权类型: "", "qfq", "hfq")
+            df = ak.fund_etf_hist_sina(symbol=normalized_code, period="daily", adjust="")
             
             if df is not None and not df.empty:
-                df = df.reset_index()
+                # 标准化列名
                 column_mapping = {
-                    'Date': 'date',
-                    'Open': 'open',
-                    'High': 'high',
-                    'Low': 'low',
-                    'Close': 'close',
-                    'Volume': 'volume'
+                    'date': 'date',
+                    'open': 'open',
+                    'high': 'high',
+                    'low': 'low',
+                    'close': 'close',
+                    'volume': 'volume'
                 }
-                df = df.rename(columns={k: v for k, v in column_mapping.items() if k in df.columns})
+                # 重命名列（如果存在）
+                for old_col, new_col in column_mapping.items():
+                    if old_col in df.columns:
+                        df = df.rename(columns={old_col: new_col})
+                
+                # 确保日期格式正确
                 if 'date' in df.columns:
                     df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
                 
-                # 添加缺失的列
-                expected_cols = ['date', 'open', 'close', 'high', 'low', 'volume', 'turnover', 'amplitude', 'change_pct', 'change_amount', 'turnover_rate']
-                for col in expected_cols:
-                    if col not in df.columns:
-                        df[col] = None
-                df = df[expected_cols]
-                print(f"[市场数据] 基金数据获取成功: {len(df)} 条")
-                return df
+                # 过滤日期范围
+                if 'date' in df.columns:
+                    df = df[(df['date'] >= start_date) & (df['date'] <= end_date)]
+                
+                if df is not None and not df.empty:
+                    print(f"[市场数据] [基金] 场内ETF数据获取成功: {len(df)} 条")
+                    # 添加缺失的列
+                    expected_cols = ['date', 'open', 'close', 'high', 'low', 'volume', 'turnover', 'amplitude', 'change_pct', 'change_amount', 'turnover_rate']
+                    for col in expected_cols:
+                        if col not in df.columns:
+                            df[col] = None
+                    df = df[expected_cols] if all(col in df.columns for col in expected_cols) else df
+                    return df
         except Exception as e:
-            print(f"[市场数据] 基金数据获取失败 (yfinance): {type(e).__name__}: {str(e)}")
+            print(f"[市场数据] [基金] 场内ETF数据获取失败: {type(e).__name__}: {str(e)}")
+            df = None
     
-    print(f"[市场数据] 基金数据获取失败")
+    # 策略2: 尝试净值数据接口（场内失败或非6位代码）
+    if df is None or df.empty:
+        print(f"[市场数据] [基金] 尝试净值数据接口")
+        try:
+            # 使用 ak.fund_open_fund_info_em 获取基金净值数据
+            # 参数：fund (基金代码), indicator (指标: "单位净值走势", "累计净值走势", "累计收益率走势", "同类排名走势", "同类平均走势")
+            df = ak.fund_open_fund_info_em(fund=normalized_code, indicator="单位净值走势")
+            
+            if df is not None and not df.empty:
+                # 标准化列名（根据实际返回的列名调整）
+                # 通常返回的列名可能是：日期、单位净值、日增长率等
+                if '日期' in df.columns:
+                    df = df.rename(columns={'日期': 'date'})
+                if '单位净值' in df.columns:
+                    df = df.rename(columns={'单位净值': 'close'})
+                elif '净值' in df.columns:
+                    df = df.rename(columns={'净值': 'close'})
+                
+                # 确保日期格式正确
+                if 'date' in df.columns:
+                    df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
+                    # 过滤日期范围
+                    df = df[(df['date'] >= start_date) & (df['date'] <= end_date)]
+                
+                if df is not None and not df.empty:
+                    # 净值数据通常只有日期和净值，需要补充其他字段
+                    if 'close' in df.columns:
+                        # 使用净值作为收盘价
+                        if 'open' not in df.columns:
+                            df['open'] = df['close']  # 净值数据通常没有开盘价，使用净值代替
+                        if 'high' not in df.columns:
+                            df['high'] = df['close']
+                        if 'low' not in df.columns:
+                            df['low'] = df['close']
+                        if 'volume' not in df.columns:
+                            df['volume'] = None
+                    
+                    print(f"[市场数据] [基金] 净值数据获取成功: {len(df)} 条")
+                    # 添加缺失的列
+                    expected_cols = ['date', 'open', 'close', 'high', 'low', 'volume', 'turnover', 'amplitude', 'change_pct', 'change_amount', 'turnover_rate']
+                    for col in expected_cols:
+                        if col not in df.columns:
+                            df[col] = None
+                    df = df[expected_cols] if all(col in df.columns for col in expected_cols) else df
+                    return df
+        except Exception as e:
+            print(f"[市场数据] [基金] 净值数据获取失败: {type(e).__name__}: {str(e)}")
+            traceback.print_exc()
+            df = None
+    
+    print(f"[市场数据] [基金] 所有接口均失败，无法获取基金数据")
     return None
 
 
@@ -1620,11 +1695,13 @@ def fetch_asset_data(
                     if (df is None or df.empty) and db is not None:
                         df = fetch_cached_market_data(code, start_date, end_date, db)
         
-        # 3. Fund 路由
+        # 3. Fund 路由：asset_type == 'fund' 强制使用 AkShare
         elif asset_type == "fund":
-            print(f"[市场数据] [路由] 基金代码")
+            print(f"[市场数据] [路由] 基金代码，强制使用 AkShare")
             try:
                 df = fetch_fund_data(code, start_date, end_date)
+                if df is None or df.empty:
+                    print(f"[市场数据] [路由] AkShare 基金接口未获取到数据")
             except Exception as e:
                 print(f"[市场数据] [路由] 获取基金数据时发生异常: {type(e).__name__}: {str(e)}")
                 traceback.print_exc()
@@ -1875,17 +1952,21 @@ def custom_update_asset_data(asset_id: int, target_date: str, db: Session) -> Di
                     print(f"[市场数据] [单点校准] AkShare 获取失败: {type(e).__name__}: {str(e)}")
                     traceback.print_exc()
         
-        # 3. 基金：使用 yfinance
+        # 3. 基金：强制使用 AkShare（日期补丁：end_date 自动设为 target_date 的后一天）
         elif asset.asset_type == "fund":
-            print(f"[市场数据] [单点校准] 基金代码，使用 yfinance")
-            if YFINANCE_AVAILABLE:
-                try:
-                    yf_code = convert_to_yfinance_symbol(asset.code) if is_a_share_code(asset.code) else asset.code
-                    df = fetch_stock_data_yfinance(yf_code, target_date, end_date, use_realtime=False)
-                    if df is not None and not df.empty:
-                        data_list = parse_market_data(df, asset.asset_type, asset.code)
-                except Exception as e:
-                    print(f"[市场数据] [单点校准] 基金数据获取失败: {type(e).__name__}: {str(e)}")
+            print(f"[市场数据] [单点校准] 基金代码，强制使用 AkShare")
+            # 日期补丁：确保 end_date 为 target_date 的后一天，防止区间重叠导致数据为空
+            end_date_patched = (target_date_obj + timedelta(days=1)).strftime('%Y-%m-%d')
+            print(f"[市场数据] [单点校准] 基金日期补丁: end_date={end_date} -> {end_date_patched}")
+            try:
+                df = fetch_fund_data(asset.code, target_date, end_date_patched)
+                if df is not None and not df.empty:
+                    data_list = parse_market_data(df, asset.asset_type, asset.code)
+                else:
+                    print(f"[市场数据] [单点校准] AkShare 基金接口未获取到数据")
+            except Exception as e:
+                print(f"[市场数据] [单点校准] 基金数据获取失败: {type(e).__name__}: {str(e)}")
+                traceback.print_exc()
         
         # 检查是否获取到数据
         if not data_list or len(data_list) == 0:
@@ -2596,7 +2677,11 @@ def update_all_assets_data(db: Session, force: bool = False) -> Dict:
 
 def calculate_stability_metrics(asset_id: int, db: Session) -> Dict:
     """
-    计算资产稳健度指标
+    计算资产稳健度指标（增强鲁棒性版本）
+    
+    阈值校验：
+    - 数据量 N < 2：返回年化波动率=0.0, 稳健性评分=0.0，备注记录"数据样本不足，待积累"
+    - 数据量 N >= 2：正常计算
     
     Args:
         asset_id: 资产ID
@@ -2606,7 +2691,8 @@ def calculate_stability_metrics(asset_id: int, db: Session) -> Dict:
         dict: {
             "stability_score": float,  # 稳健性评分 (0-100)
             "annual_volatility": float,  # 年化波动率 (%)
-            "daily_returns": List[float]  # 最近20个交易日的每日收益率 (%)
+            "daily_returns": List[float],  # 最近20个交易日的每日收益率 (%)
+            "remark": str  # 备注信息（可选）
         }
     """
     print(f"[市场数据] [稳健度计算] 开始计算资产 {asset_id} 的稳健度指标")
@@ -2619,30 +2705,61 @@ def calculate_stability_metrics(asset_id: int, db: Session) -> Dict:
         print(f"[市场数据] [稳健度计算] 查询日期范围: {baseline_date_obj} 至 {today}")
         
         # 查询市场数据，按日期升序排列
+        # 使用 yield_per 优化大数据量查询，但这里数据量通常不大，直接使用 all() 即可
         market_data_list = db.query(MarketData).filter(
             MarketData.asset_id == asset_id,
             MarketData.date >= baseline_date_obj,
             MarketData.date <= today
         ).order_by(MarketData.date.asc()).all()
         
-        if not market_data_list or len(market_data_list) < 2:
-            print(f"[市场数据] [稳健度计算] 数据不足，无法计算稳健度 (数据条数: {len(market_data_list)})")
+        # 阈值校验：数据量检查
+        data_count = len(market_data_list) if market_data_list else 0
+        
+        if data_count < 2:
+            print(f"[市场数据] [稳健度计算] 数据样本不足 (N={data_count} < 2)，优雅降级：返回默认值")
             return {
-                "stability_score": None,
-                "annual_volatility": None,
-                "daily_returns": []
+                "stability_score": 0.0,
+                "annual_volatility": 0.0,
+                "daily_returns": [],
+                "remark": "数据样本不足，待积累"
             }
         
-        print(f"[市场数据] [稳健度计算] 找到 {len(market_data_list)} 条数据")
+        print(f"[市场数据] [稳健度计算] 找到 {data_count} 条数据，开始计算")
         
-        # 提取收盘价
-        prices = np.array([md.close_price for md in market_data_list])
+        # 提取收盘价，过滤无效值
+        prices = []
+        for md in market_data_list:
+            if md.close_price is not None and md.close_price > 0:
+                prices.append(float(md.close_price))
+        
+        # 再次检查有效数据量
+        if len(prices) < 2:
+            print(f"[市场数据] [稳健度计算] 有效价格数据不足 (N={len(prices)} < 2)，优雅降级")
+            return {
+                "stability_score": 0.0,
+                "annual_volatility": 0.0,
+                "daily_returns": [],
+                "remark": "数据样本不足，待积累"
+            }
+        
+        prices = np.array(prices)
         
         # 计算每日对数收益率: r_t = ln(P_t / P_{t-1})
         log_returns = np.diff(np.log(prices))
         
+        # 检查收益率数据是否有效
+        if len(log_returns) == 0:
+            print(f"[市场数据] [稳健度计算] 无法计算收益率，优雅降级")
+            return {
+                "stability_score": 0.0,
+                "annual_volatility": 0.0,
+                "daily_returns": [],
+                "remark": "数据样本不足，待积累"
+            }
+        
         # 计算年化波动率: σ_annual = std(r) × sqrt(252)
         # 252 是A股每年的交易日数
+        # 使用 ddof=1 进行无偏估计
         annual_volatility = float(np.std(log_returns, ddof=1) * np.sqrt(252) * 100)  # 转换为百分比
         
         # 计算稳健性评分: stability_score = max(0, 100 * (1 - σ_annual))
@@ -2653,23 +2770,31 @@ def calculate_stability_metrics(asset_id: int, db: Session) -> Dict:
         # 使用简单收益率而不是对数收益率，更直观
         daily_returns_pct = []
         for i in range(max(0, len(prices) - 20), len(prices)):
-            if i > 0:
+            if i > 0 and prices[i-1] > 0:
                 simple_return = (prices[i] - prices[i-1]) / prices[i-1] * 100
                 daily_returns_pct.append(float(simple_return))
         
         print(f"[市场数据] [稳健度计算] 计算完成: 年化波动率={annual_volatility:.2f}%, 稳健性评分={stability_score:.2f}, 最近20日收益率数量={len(daily_returns_pct)}")
         
-        return {
+        result = {
             "stability_score": round(stability_score, 2),
             "annual_volatility": round(annual_volatility, 2),
             "daily_returns": [round(r, 2) for r in daily_returns_pct]
         }
         
+        # 如果数据量较少，添加备注
+        if data_count < 10:
+            result["remark"] = f"数据样本较少 (N={data_count})，结果仅供参考"
+        
+        return result
+        
     except Exception as e:
         print(f"[市场数据] [稳健度计算] 计算失败: {type(e).__name__}: {str(e)}")
         traceback.print_exc()
+        # 优雅降级：返回默认值而不是 None
         return {
-            "stability_score": None,
-            "annual_volatility": None,
-            "daily_returns": []
+            "stability_score": 0.0,
+            "annual_volatility": 0.0,
+            "daily_returns": [],
+            "remark": f"计算异常: {type(e).__name__}"
         }

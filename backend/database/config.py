@@ -66,10 +66,14 @@ def _init_engine():
         _engine = create_engine(
             configured_url,
             echo=False,
-            pool_size=5,  # 连接池大小
-            max_overflow=10,  # 最大溢出连接数
-            pool_pre_ping=True,  # 连接前检查连接是否有效
-            pool_recycle=3600,  # 连接回收时间（秒）
+            pool_size=10,  # 连接池大小（增加以应对并发）
+            max_overflow=20,  # 最大溢出连接数（增加以应对峰值）
+            pool_pre_ping=True,  # 连接前检查连接是否有效（防止 stale 连接）
+            pool_recycle=1800,  # 连接回收时间（秒，30分钟，防止连接超时）
+            connect_args={
+                "connect_timeout": 10,  # 连接超时（秒）
+                "options": "-c statement_timeout=30000"  # 查询超时（30秒，毫秒单位）
+            }
         )
     return _engine
 

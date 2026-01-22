@@ -820,7 +820,19 @@ async def get_pk_pool_detail(
         market_cap = latest_data.market_cap if latest_data and latest_data.market_cap is not None else None
         eps_forecast = latest_data.eps_forecast if latest_data and latest_data.eps_forecast is not None else None
 
-        stability_metrics = calculate_stability_metrics(asset.id, db)
+        # 计算稳健度指标（增加错误处理，确保单个资产失败不阻塞其他资产）
+        try:
+            stability_metrics = calculate_stability_metrics(asset.id, db)
+        except Exception as e:
+            # 单个资产稳健度计算失败，使用默认值，不阻塞其他资产
+            print(f"[API] PK池稳健度计算失败 (资产: {asset.code}): {type(e).__name__}: {str(e)}")
+            traceback.print_exc()
+            stability_metrics = {
+                "stability_score": 0.0,
+                "annual_volatility": 0.0,
+                "daily_returns": [],
+                "remark": f"计算异常: {type(e).__name__}"
+            }
 
         snapshot_results.append({
             "asset_id": asset.id,
@@ -843,9 +855,9 @@ async def get_pk_pool_detail(
             "pe_ratio": pe_ratio,
             "pb_ratio": pb_ratio,
             "baseline_pe_ratio": baseline_pe_ratio,
-            "stability_score": stability_metrics["stability_score"],
-            "annual_volatility": stability_metrics["annual_volatility"],
-            "daily_returns": stability_metrics["daily_returns"],
+            "stability_score": stability_metrics.get("stability_score", 0.0),
+            "annual_volatility": stability_metrics.get("annual_volatility", 0.0),
+            "daily_returns": stability_metrics.get("daily_returns", []),
         })
 
     asset_list = [
@@ -1407,79 +1419,97 @@ async def get_snapshot_data(db: Session = Depends(get_db)):
     
     result = []
     for asset in assets:
-        # 获取该资产在最新交易日的数据
-        latest_data = db.query(MarketData).filter(
-            MarketData.asset_id == asset.id,
-            MarketData.date == latest_trading_date
-        ).first()
-        
-        # 获取基准价格（2026/01/05的收盘价）
-        baseline_data = db.query(MarketData).filter(
-            MarketData.asset_id == asset.id,
-            MarketData.date == baseline_date_obj
-        ).first()
-        
-        baseline_price = baseline_data.close_price if baseline_data else asset.baseline_price
-        baseline_pe_ratio = baseline_data.pe_ratio if baseline_data and baseline_data.pe_ratio is not None else None
-        
-        # 计算累计收益
-        change_rate = None
-        if latest_data and baseline_price and baseline_price > 0:
-            change_rate = ((latest_data.close_price - baseline_price) / baseline_price) * 100
-        
-        # 获取昨天的收盘价（用于计算涨跌幅）
-        # 查找最新交易日之前最近的一个交易日的数据
-        yesterday_data = db.query(MarketData).filter(
-            MarketData.asset_id == asset.id,
-            MarketData.date < latest_trading_date
-        ).order_by(MarketData.date.desc()).first()
-        
-        yesterday_close_price = yesterday_data.close_price if yesterday_data else None
-        
-        # 计算今天对比昨天的涨跌幅
-        daily_change_rate = None
-        if latest_data and yesterday_close_price and yesterday_close_price > 0:
-            daily_change_rate = ((latest_data.close_price - yesterday_close_price) / yesterday_close_price) * 100
-        
-        # 显式获取财务指标，确保字段存在
-        pe_ratio = latest_data.pe_ratio if latest_data and latest_data.pe_ratio is not None else None
-        pb_ratio = latest_data.pb_ratio if latest_data and latest_data.pb_ratio is not None else None
-        market_cap = latest_data.market_cap if latest_data and latest_data.market_cap is not None else None
-        eps_forecast = latest_data.eps_forecast if latest_data and latest_data.eps_forecast is not None else None
-        
-        # 调试日志
-        if latest_data:
-            print(f"[API] Snapshot财务指标 (资产: {asset.code}): PE={pe_ratio}, PB={pb_ratio}, 市值={market_cap}, EPS={eps_forecast}")
-        
-        # 计算稳健度指标
-        stability_metrics = calculate_stability_metrics(asset.id, db)
-        print(f"[API] Snapshot稳健度指标 (资产: {asset.code}): 稳健性评分={stability_metrics['stability_score']}, 年化波动率={stability_metrics['annual_volatility']}%, 收益率数据数量={len(stability_metrics['daily_returns'])}")
-        
-        result.append({
-            "asset_id": asset.id,
-            "code": asset.code,
-            "name": asset.name,
-            "user": {
-                "id": asset.user.id,
-                "name": asset.user.name,
-                "avatar_url": normalize_avatar_url(asset.user.avatar_url) if asset.user.avatar_url else None
-            },
-            "baseline_price": baseline_price,
-            "baseline_date": baseline_date_obj.isoformat(),
-            "latest_date": latest_trading_date.isoformat(),
-            "latest_close_price": latest_data.close_price if latest_data else None,
-            "yesterday_close_price": yesterday_close_price,
-            "daily_change_rate": daily_change_rate,
-            "latest_market_cap": market_cap,
-            "eps_forecast": eps_forecast,
-            "change_rate": change_rate,
-            "pe_ratio": pe_ratio,
-            "pb_ratio": pb_ratio,
-            "baseline_pe_ratio": baseline_pe_ratio,
-            "stability_score": stability_metrics["stability_score"],
-            "annual_volatility": stability_metrics["annual_volatility"],
-            "daily_returns": stability_metrics["daily_returns"],
-        })
+        try:
+            # 获取该资产在最新交易日的数据
+            latest_data = db.query(MarketData).filter(
+                MarketData.asset_id == asset.id,
+                MarketData.date == latest_trading_date
+            ).first()
+            
+            # 获取基准价格（2026/01/05的收盘价）
+            baseline_data = db.query(MarketData).filter(
+                MarketData.asset_id == asset.id,
+                MarketData.date == baseline_date_obj
+            ).first()
+            
+            baseline_price = baseline_data.close_price if baseline_data else asset.baseline_price
+            baseline_pe_ratio = baseline_data.pe_ratio if baseline_data and baseline_data.pe_ratio is not None else None
+            
+            # 计算累计收益
+            change_rate = None
+            if latest_data and baseline_price and baseline_price > 0:
+                change_rate = ((latest_data.close_price - baseline_price) / baseline_price) * 100
+            
+            # 获取昨天的收盘价（用于计算涨跌幅）
+            # 查找最新交易日之前最近的一个交易日的数据
+            yesterday_data = db.query(MarketData).filter(
+                MarketData.asset_id == asset.id,
+                MarketData.date < latest_trading_date
+            ).order_by(MarketData.date.desc()).first()
+            
+            yesterday_close_price = yesterday_data.close_price if yesterday_data else None
+            
+            # 计算今天对比昨天的涨跌幅
+            daily_change_rate = None
+            if latest_data and yesterday_close_price and yesterday_close_price > 0:
+                daily_change_rate = ((latest_data.close_price - yesterday_close_price) / yesterday_close_price) * 100
+            
+            # 显式获取财务指标，确保字段存在
+            pe_ratio = latest_data.pe_ratio if latest_data and latest_data.pe_ratio is not None else None
+            pb_ratio = latest_data.pb_ratio if latest_data and latest_data.pb_ratio is not None else None
+            market_cap = latest_data.market_cap if latest_data and latest_data.market_cap is not None else None
+            eps_forecast = latest_data.eps_forecast if latest_data and latest_data.eps_forecast is not None else None
+            
+            # 调试日志
+            if latest_data:
+                print(f"[API] Snapshot财务指标 (资产: {asset.code}): PE={pe_ratio}, PB={pb_ratio}, 市值={market_cap}, EPS={eps_forecast}")
+            
+            # 计算稳健度指标（增加错误处理，确保单个资产失败不阻塞其他资产）
+            try:
+                stability_metrics = calculate_stability_metrics(asset.id, db)
+                print(f"[API] Snapshot稳健度指标 (资产: {asset.code}): 稳健性评分={stability_metrics.get('stability_score')}, 年化波动率={stability_metrics.get('annual_volatility')}%, 收益率数据数量={len(stability_metrics.get('daily_returns', []))}")
+            except Exception as e:
+                # 单个资产稳健度计算失败，使用默认值，不阻塞其他资产
+                print(f"[API] Snapshot稳健度计算失败 (资产: {asset.code}): {type(e).__name__}: {str(e)}")
+                traceback.print_exc()
+                stability_metrics = {
+                    "stability_score": 0.0,
+                    "annual_volatility": 0.0,
+                    "daily_returns": [],
+                    "remark": f"计算异常: {type(e).__name__}"
+                }
+            
+            result.append({
+                "asset_id": asset.id,
+                "code": asset.code,
+                "name": asset.name,
+                "user": {
+                    "id": asset.user.id,
+                    "name": asset.user.name,
+                    "avatar_url": normalize_avatar_url(asset.user.avatar_url) if asset.user.avatar_url else None
+                },
+                "baseline_price": baseline_price,
+                "baseline_date": baseline_date_obj.isoformat(),
+                "latest_date": latest_trading_date.isoformat(),
+                "latest_close_price": latest_data.close_price if latest_data else None,
+                "yesterday_close_price": yesterday_close_price,
+                "daily_change_rate": daily_change_rate,
+                "latest_market_cap": market_cap,
+                "eps_forecast": eps_forecast,
+                "change_rate": change_rate,
+                "pe_ratio": pe_ratio,
+                "pb_ratio": pb_ratio,
+                "baseline_pe_ratio": baseline_pe_ratio,
+                "stability_score": stability_metrics.get("stability_score", 0.0),
+                "annual_volatility": stability_metrics.get("annual_volatility", 0.0),
+                "daily_returns": stability_metrics.get("daily_returns", []),
+            })
+        except Exception as e:
+            # 单个资产处理失败，记录错误但继续处理其他资产
+            print(f"[API] Snapshot处理资产失败 (资产: {asset.code if asset else 'unknown'}): {type(e).__name__}: {str(e)}")
+            traceback.print_exc()
+            # 跳过该资产，继续处理下一个
+            continue
     
     return result
 
