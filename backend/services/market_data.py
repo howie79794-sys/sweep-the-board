@@ -1351,8 +1351,9 @@ def fetch_fund_data(code: str, start_date: str, end_date: str) -> Optional[pd.Da
         print(f"[市场数据] [基金] 检测到6位数字代码，先尝试场内ETF数据接口")
         try:
             # 使用 ak.fund_etf_hist_sina 获取场内ETF数据
-            # 参数：symbol (基金代码)，该函数只接受 symbol 参数，返回所有历史数据
-            df = ak.fund_etf_hist_sina(symbol=normalized_code)
+            # 该函数只接受基金代码作为位置参数，返回所有历史数据
+            # 注意：根据 AkShare 最新版本，该函数只接受位置参数，不接受关键字参数
+            df = ak.fund_etf_hist_sina(normalized_code)
             
             if df is not None and not df.empty:
                 # 标准化列名
@@ -1395,8 +1396,9 @@ def fetch_fund_data(code: str, start_date: str, end_date: str) -> Optional[pd.Da
         print(f"[市场数据] [基金] 尝试净值数据接口")
         try:
             # 使用 ak.fund_open_fund_info_em 获取基金净值数据
-            # 参数：fund (基金代码), indicator (指标: "单位净值走势", "累计净值走势", "累计收益率走势", "同类排名走势", "同类平均走势")
-            df = ak.fund_open_fund_info_em(fund=normalized_code, indicator="单位净值走势")
+            # 根据 AkShare 最新版本，该函数使用位置参数：基金代码, indicator
+            # indicator 可选值："单位净值走势", "累计净值走势", "累计收益率走势", "同类排名走势", "同类平均走势"
+            df = ak.fund_open_fund_info_em(normalized_code, "单位净值走势")
             
             if df is not None and not df.empty:
                 # 标准化列名（根据实际返回的列名调整）
