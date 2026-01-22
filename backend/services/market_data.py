@@ -523,6 +523,8 @@ def fetch_stock_data_akshare(code: str, start_date: str, end_date: str) -> Optio
 
     start_date = normalize_date_str(start_date)
     end_date = normalize_date_str(end_date)
+    # 应用日期跨度补丁
+    start_date, end_date = apply_date_span_patch(start_date, end_date)
     symbol = normalize_stock_code(code)
 
     try:
@@ -646,6 +648,8 @@ def fetch_futures_data_akshare(code: str, start_date: str, end_date: str) -> Opt
 
     start_date = normalize_date_str(start_date)
     end_date = normalize_date_str(end_date)
+    # 应用日期跨度补丁
+    start_date, end_date = apply_date_span_patch(start_date, end_date)
 
     main_contract = resolve_futures_main_contract(code)
     if not main_contract:
@@ -805,6 +809,8 @@ def fetch_stock_data_yfinance(code: str, start_date: str, end_date: str, use_rea
     try:
         start_date = normalize_date_str(start_date)
         end_date = normalize_date_str(end_date)
+        # 应用日期跨度补丁
+        start_date, end_date = apply_date_span_patch(start_date, end_date)
         print(f"[市场数据] [yfinance] 尝试获取数据: code={code}, start_date={start_date}, end_date={end_date}, use_realtime={use_realtime}")
         
         # 如果是盘中且需要实时数据，且查询的是今天的数据
@@ -1327,6 +1333,9 @@ def fetch_fund_data(code: str, start_date: str, end_date: str) -> Optional[pd.Da
     
     start_date = normalize_date_str(start_date)
     end_date = normalize_date_str(end_date)
+    # 应用日期跨度补丁
+    start_date, end_date = apply_date_span_patch(start_date, end_date)
+    
     print(f"[市场数据] [基金] 开始获取基金数据: code={code}, start_date={start_date}, end_date={end_date}")
     
     # 标准化代码（去除前缀后缀）
@@ -1342,8 +1351,8 @@ def fetch_fund_data(code: str, start_date: str, end_date: str) -> Optional[pd.Da
         print(f"[市场数据] [基金] 检测到6位数字代码，先尝试场内ETF数据接口")
         try:
             # 使用 ak.fund_etf_hist_sina 获取场内ETF数据
-            # 参数：symbol (基金代码), period (周期: "daily", "weekly", "monthly"), adjust (复权类型: "", "qfq", "hfq")
-            df = ak.fund_etf_hist_sina(symbol=normalized_code, period="daily", adjust="")
+            # 参数：symbol (基金代码)，该函数只接受 symbol 参数，返回所有历史数据
+            df = ak.fund_etf_hist_sina(symbol=normalized_code)
             
             if df is not None and not df.empty:
                 # 标准化列名
@@ -1570,6 +1579,26 @@ def parse_market_data(df: pd.DataFrame, asset_type: str, code: str) -> List[Dict
     return results
 
 
+def apply_date_span_patch(start_date: str, end_date: str) -> tuple[str, str]:
+    """
+    日期跨度补丁：如果 start_date == end_date，自动将 end_date 延长一天
+    
+    Args:
+        start_date: 开始日期 "YYYY-MM-DD"
+        end_date: 结束日期 "YYYY-MM-DD"
+    
+    Returns:
+        (start_date, end_date): 处理后的日期对
+    """
+    if start_date == end_date:
+        from datetime import datetime, timedelta
+        end_date_obj = datetime.strptime(end_date, '%Y-%m-%d') + timedelta(days=1)
+        end_date_patched = end_date_obj.strftime('%Y-%m-%d')
+        print(f"[市场数据] [日期补丁] start_date == end_date ({start_date})，自动延长 end_date 至 {end_date_patched}")
+        return start_date, end_date_patched
+    return start_date, end_date
+
+
 def fetch_asset_data(
     code: str,
     asset_type: str,
@@ -1600,6 +1629,8 @@ def fetch_asset_data(
     try:
         start_date = normalize_date_str(start_date)
         end_date = normalize_date_str(end_date)
+        # 应用日期跨度补丁
+        start_date, end_date = apply_date_span_patch(start_date, end_date)
     except ValueError as e:
         print(f"[市场数据] 错误: 无法解析日期范围: {str(e)}")
         return []
@@ -2712,16 +2743,16 @@ def calculate_stability_metrics(asset_id: int, db: Session) -> Dict:
             MarketData.date <= today
         ).order_by(MarketData.date.asc()).all()
         
-        # 阈值校验：数据量检查
+        # 阈值校验：数据量检查（需要至少3条数据才能产生2个收益率样本）
         data_count = len(market_data_list) if market_data_list else 0
         
-        if data_count < 2:
-            print(f"[市场数据] [稳健度计算] 数据样本不足 (N={data_count} < 2)，优雅降级：返回默认值")
+        if data_count < 3:
+            print(f"[市场数据] [稳健度计算] 数据积累中 (N={data_count} < 3)，返回默认值")
             return {
                 "stability_score": 0.0,
                 "annual_volatility": 0.0,
                 "daily_returns": [],
-                "remark": "数据样本不足，待积累"
+                "remark": "数据积累中"
             }
         
         print(f"[市场数据] [稳健度计算] 找到 {data_count} 条数据，开始计算")
@@ -2732,14 +2763,14 @@ def calculate_stability_metrics(asset_id: int, db: Session) -> Dict:
             if md.close_price is not None and md.close_price > 0:
                 prices.append(float(md.close_price))
         
-        # 再次检查有效数据量
-        if len(prices) < 2:
-            print(f"[市场数据] [稳健度计算] 有效价格数据不足 (N={len(prices)} < 2)，优雅降级")
+        # 再次检查有效数据量（需要至少3条有效价格才能产生2个收益率样本）
+        if len(prices) < 3:
+            print(f"[市场数据] [稳健度计算] 数据积累中 (有效价格N={len(prices)} < 3)，返回默认值")
             return {
                 "stability_score": 0.0,
                 "annual_volatility": 0.0,
                 "daily_returns": [],
-                "remark": "数据样本不足，待积累"
+                "remark": "数据积累中"
             }
         
         prices = np.array(prices)
