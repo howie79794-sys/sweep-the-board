@@ -9,12 +9,12 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
+  Brush,
 } from "recharts"
-import { formatPercent, formatNumber } from "@/lib/utils"
-import { cn } from "@/lib/utils"
+import { formatPercent, formatNumber, formatChartAxisDate, formatTooltipDate, CHART_DEFAULT_VISIBLE_POINTS, cn } from "@/lib/utils"
 import { UserAvatar } from "@/components/UserAvatar"
 import { type PKPoolChartAsset, type User } from "@/types"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 
 interface CumulativeReturnChartProps {
   assets: PKPoolChartAsset[]
@@ -24,6 +24,7 @@ interface CumulativeReturnChartProps {
 
 interface ChartDataPoint {
   date: string
+  originalDate: string
   [key: string]: string | number | undefined | null
 }
 
@@ -33,6 +34,7 @@ export function CumulativeReturnChart({
   className,
 }: CumulativeReturnChartProps) {
   const [selectedAssetCode, setSelectedAssetCode] = useState<string | null>(null)
+  const [range, setRange] = useState({ startIndex: 0, endIndex: 0 })
 
   if (!assets || assets.length === 0) {
     return (
@@ -80,12 +82,51 @@ export function CumulativeReturnChart({
     const dateStr = typeof item.date === "string" ? item.date : ""
     return {
       ...item,
-      date: new Date(dateStr).toLocaleDateString("zh-CN", {
-        month: "short",
-        day: "numeric",
-      }),
+      originalDate: dateStr,
+      date: formatChartAxisDate(dateStr),
     }
   })
+
+  const totalPoints = chartData.length
+  const effectiveRange =
+    range.endIndex <= 0
+      ? { startIndex: Math.max(0, totalPoints - CHART_DEFAULT_VISIBLE_POINTS), endIndex: totalPoints }
+      : range
+
+  useEffect(() => {
+    if (totalPoints === 0) return
+    setRange((prev) => {
+      if (prev.endIndex > totalPoints || prev.startIndex >= totalPoints) {
+        return {
+          startIndex: Math.max(0, totalPoints - CHART_DEFAULT_VISIBLE_POINTS),
+          endIndex: totalPoints,
+        }
+      }
+      return prev
+    })
+  }, [totalPoints])
+
+  const handleBrushChange = (newStart: number, newEnd: number) => {
+    setRange({ startIndex: newStart, endIndex: newEnd })
+  }
+
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault()
+    const delta = e.deltaY > 0 ? 1 : -1
+    const step = Math.max(1, Math.floor((effectiveRange.endIndex - effectiveRange.startIndex) * 0.1))
+    setRange((prev) => {
+      const start = prev.endIndex <= 0 ? effectiveRange.startIndex : prev.startIndex
+      const end = prev.endIndex <= 0 ? effectiveRange.endIndex : prev.endIndex
+      if (delta > 0) {
+        const newStart = Math.min(start + step, end - 5)
+        const newEnd = Math.max(end - step, start + 5)
+        return { startIndex: newStart, endIndex: newEnd }
+      }
+      const newStart = Math.max(0, start - step)
+      const newEnd = Math.min(totalPoints, end + step)
+      return { startIndex: newStart, endIndex: newEnd }
+    })
+  }
 
   if (chartData.length === 0) {
     return (
@@ -122,11 +163,20 @@ export function CumulativeReturnChart({
           {showChangeRate ? "累计收益率对比曲线" : "收盘价对比曲线"}
         </h3>
       </div>
-      <div className="w-full h-[400px]">
+      <div className="w-full h-[400px]" onWheel={handleWheel} style={{ overflow: "hidden" }}>
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={chartData}>
+          <LineChart data={chartData} margin={{ top: 10, right: 20, left: 10, bottom: 80 }}>
             <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="date" />
+            <XAxis
+              dataKey="date"
+              domain={[
+                chartData[effectiveRange.startIndex]?.date ?? chartData[0]?.date,
+                chartData[effectiveRange.endIndex - 1]?.date ?? chartData[chartData.length - 1]?.date,
+              ]}
+              allowDataOverflow
+              interval="preserveStartEnd"
+              tick={{ fontSize: 12 }}
+            />
             <YAxis
               label={{
                 value: showChangeRate ? "累计收益率 (%)" : "收盘价 (元)",
@@ -135,6 +185,10 @@ export function CumulativeReturnChart({
               }}
             />
             <Tooltip
+              labelFormatter={(_, payload) => {
+                const raw = (Array.isArray(payload) && payload[0]?.payload?.originalDate) as string | undefined
+                return raw ? formatTooltipDate(raw) : ""
+              }}
               formatter={(value: any, name: string) => {
                 const numValue = typeof value === "number" ? value : parseFloat(String(value))
                 if (Number.isNaN(numValue)) return value
@@ -186,6 +240,18 @@ export function CumulativeReturnChart({
                 />
               )
             })}
+            <Brush
+              dataKey="date"
+              height={28}
+              stroke="#8884d8"
+              startIndex={effectiveRange.startIndex}
+              endIndex={effectiveRange.endIndex}
+              onChange={(newIndex) => {
+                const start = newIndex?.startIndex ?? 0
+                const end = newIndex?.endIndex ?? totalPoints
+                handleBrushChange(start, end)
+              }}
+            />
           </LineChart>
         </ResponsiveContainer>
       </div>

@@ -10,15 +10,18 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
+  Brush,
 } from "recharts"
 import { dataAPI } from "@/lib/api"
-import { formatNumber } from "@/lib/utils"
-import { cn } from "@/lib/utils"
+import { formatNumber, formatChartAxisDate, formatTooltipDate, CHART_DEFAULT_VISIBLE_POINTS, cn } from "@/lib/utils"
 import { UserAvatar } from "@/components/UserAvatar"
 import { type User } from "@/types"
 
 interface PBRatioChartProps {
   className?: string
+  chartRange?: { startIndex: number; endIndex: number }
+  onChartRangeChange?: (startIndex: number, endIndex: number) => void
+  groupId?: string
 }
 
 interface ChartDataPoint {
@@ -50,16 +53,34 @@ interface AssetChartData {
 
 export function PBRatioChart({
   className,
+  chartRange,
+  onChartRangeChange,
+  groupId,
 }: PBRatioChartProps) {
   const [chartData, setChartData] = useState<ChartDataPoint[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [assets, setAssets] = useState<AssetChartData[]>([])
   const [selectedAssetCode, setSelectedAssetCode] = useState<string | null>(null)
+  const [range, setRange] = useState({ startIndex: 0, endIndex: 0 })
 
   useEffect(() => {
     loadChartData()
   }, [])
+
+  useEffect(() => {
+    if (chartData.length === 0) return
+    const totalPoints = chartData.length
+    setRange((prev) => {
+      if (prev.endIndex > totalPoints || prev.startIndex >= totalPoints) {
+        return {
+          startIndex: Math.max(0, totalPoints - CHART_DEFAULT_VISIBLE_POINTS),
+          endIndex: totalPoints,
+        }
+      }
+      return prev
+    })
+  }, [chartData.length])
 
   const loadChartData = async () => {
     try {
@@ -128,14 +149,11 @@ export function PBRatioChart({
       // 格式化日期，保留原始日期用于 Tooltip 兜底逻辑
       const formattedData = chartDataArray.map((item: Record<string, string | number | null>) => {
         const dateStr = typeof item.date === 'string' ? item.date : ''
-        const originalDate = item.originalDate || dateStr
+        const originalDate = (item.originalDate as string) || dateStr
         return {
           ...item,
-          originalDate: originalDate, // 保留原始日期
-          date: new Date(dateStr).toLocaleDateString("zh-CN", {
-            month: "short",
-            day: "numeric",
-          }),
+          originalDate,
+          date: formatChartAxisDate(dateStr),
         }
       })
 
@@ -173,7 +191,44 @@ export function PBRatioChart({
     )
   }
 
-  // 生成颜色数组
+  const totalPoints = chartData.length
+  const effectiveRange =
+    chartRange != null
+      ? chartRange
+      : range.endIndex <= 0
+        ? { startIndex: Math.max(0, totalPoints - CHART_DEFAULT_VISIBLE_POINTS), endIndex: totalPoints }
+        : range
+
+  const handleBrushChange = (newStart: number, newEnd: number) => {
+    if (onChartRangeChange) {
+      onChartRangeChange(newStart, newEnd)
+    } else {
+      setRange({ startIndex: newStart, endIndex: newEnd })
+    }
+  }
+
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault()
+    const delta = e.deltaY > 0 ? 1 : -1
+    const step = Math.max(1, Math.floor((effectiveRange.endIndex - effectiveRange.startIndex) * 0.1))
+    const update = (prev: { startIndex: number; endIndex: number }) => {
+      if (delta > 0) {
+        const newStart = Math.min(prev.startIndex + step, prev.endIndex - 5)
+        const newEnd = Math.max(prev.endIndex - step, prev.startIndex + 5)
+        return { startIndex: newStart, endIndex: newEnd }
+      }
+      const newStart = Math.max(0, prev.startIndex - step)
+      const newEnd = Math.min(totalPoints, prev.endIndex + step)
+      return { startIndex: newStart, endIndex: newEnd }
+    }
+    if (onChartRangeChange) {
+      const next = update(effectiveRange)
+      onChartRangeChange(next.startIndex, next.endIndex)
+    } else {
+      setRange((prev) => update(prev.endIndex <= 0 ? effectiveRange : prev))
+    }
+  }
+
   const colors = [
     "#8884d8",
     "#82ca9d",
@@ -204,11 +259,20 @@ export function PBRatioChart({
           市净率 (P/B) 趋势图
         </h3>
       </div>
-      <div className="w-full h-[400px]">
+      <div className="w-full h-[400px]" onWheel={handleWheel} style={{ overflow: "hidden" }}>
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={chartData}>
+          <LineChart data={chartData} margin={{ top: 10, right: 20, left: 10, bottom: 80 }} syncId={groupId}>
             <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="date" />
+            <XAxis
+              dataKey="date"
+              domain={[
+                chartData[effectiveRange.startIndex]?.date ?? chartData[0]?.date,
+                chartData[effectiveRange.endIndex - 1]?.date ?? chartData[chartData.length - 1]?.date,
+              ]}
+              allowDataOverflow
+              interval="preserveStartEnd"
+              tick={{ fontSize: 12 }}
+            />
             <YAxis
               label={{
                 value: "市净率 (P/B)",
@@ -217,6 +281,10 @@ export function PBRatioChart({
               }}
             />
             <Tooltip
+              labelFormatter={(_, payload) => {
+                const raw = (Array.isArray(payload) && payload[0]?.payload?.originalDate) as string | undefined
+                return raw ? formatTooltipDate(raw) : ""
+              }}
               formatter={(value: any, name: string, props: any) => {
                 // 处理 null 或 undefined
                 if (value === null || value === undefined) {
@@ -323,6 +391,18 @@ export function PBRatioChart({
                 />
               )
             })}
+            <Brush
+              dataKey="date"
+              height={28}
+              stroke="#8884d8"
+              startIndex={effectiveRange.startIndex}
+              endIndex={effectiveRange.endIndex}
+              onChange={(newIndex) => {
+                const start = newIndex?.startIndex ?? 0
+                const end = newIndex?.endIndex ?? totalPoints
+                handleBrushChange(start, end)
+              }}
+            />
           </LineChart>
         </ResponsiveContainer>
       </div>
