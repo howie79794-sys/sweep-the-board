@@ -49,7 +49,12 @@ export default function Home() {
       </div>
       </div>
 
-      {/* 折叠区域：更多分析图表，默认折叠 */}
+      {/* 核心资产明细表：始终展示，不放入折叠 */}
+      <div className="mt-8 border rounded-lg p-6">
+        <AssetSnapshotTable />
+      </div>
+
+      {/* 折叠区域：更多分析图表，放在核心资产明细表下方，默认折叠 */}
       <div className="mt-8">
         <button
           type="button"
@@ -89,11 +94,6 @@ export default function Home() {
                 onChartRangeChange={handleChartRangeChange}
                 groupId={HOME_CHARTS_GROUP_ID}
               />
-            </div>
-
-            {/* 核心资产明细表 */}
-            <div className="border rounded-lg p-6">
-              <AssetSnapshotTable />
             </div>
           </div>
         )}
