@@ -109,7 +109,7 @@ export function DragonTigerBoard({ className }: DragonTigerBoardProps) {
   return (
     <div className={cn("space-y-4", className)}>
       <h2 className="text-2xl font-bold">核心资产龙虎榜</h2>
-      <div className="flex flex-nowrap gap-3 justify-start overflow-x-auto pb-2">
+      <div className="flex flex-nowrap gap-3 justify-center overflow-x-auto pb-2">
         {userRankingsWithAssets.map((ranking, index) => {
           const rank = ranking.user_rank
           const showRankBadge = rank !== null && rank !== undefined && rank <= 3

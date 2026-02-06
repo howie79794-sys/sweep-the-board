@@ -22,13 +22,15 @@ export default function Home() {
       {/* 自然周榜单侧边栏：宽度约 240px，lg 以下隐藏，靠左 */}
       <WeeklySidebar />
 
-      <div className="flex-1 min-w-0 space-y-8">
+      <div className="flex-1 min-w-0 flex flex-col">
+      {/* 龙虎榜 + 趋势图区域：龙虎榜基于此区域居中 */}
+      <div className="flex-1 space-y-8">
       {/* 核心资产龙虎榜 */}
-      <div>
+      <div className="flex flex-col items-center">
         <DragonTigerBoard />
       </div>
 
-      {/* 收益率走势图 */}
+      {/* 累计收益率趋势追踪图 */}
       <div className="border rounded-lg p-6">
         <AllAssetsChart
           showChangeRate={true}
@@ -37,7 +39,10 @@ export default function Home() {
           groupId={HOME_CHARTS_GROUP_ID}
         />
       </div>
+      </div>
 
+      {/* 其他图表 */}
+      <div className="space-y-8 mt-8">
       {/* 收盘价走势图 */}
       <div className="border rounded-lg p-6">
         <AllAssetsChart
@@ -69,6 +74,7 @@ export default function Home() {
       {/* 核心资产明细表 */}
       <div className="border rounded-lg p-6">
         <AssetSnapshotTable />
+      </div>
       </div>
       </div>
     </div>

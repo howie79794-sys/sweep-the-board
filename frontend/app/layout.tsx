@@ -48,7 +48,7 @@ export default function RootLayout({
               </div>
             </div>
           </header>
-          <main className="container mx-auto px-4 py-8">
+          <main className="w-full px-4 py-8">
             {children}
           </main>
           <footer className="border-t mt-12 py-4">

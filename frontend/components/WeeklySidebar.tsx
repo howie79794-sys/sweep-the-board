@@ -74,6 +74,7 @@ export function WeeklySidebar({ className }: WeeklySidebarProps) {
           <ul className="space-y-2 max-h-[calc(100vh-12rem)] overflow-y-auto pr-1">
             {items.map((item) => {
               const isChampion = item.rank === 1
+              const isLastPlace = item.rank === items.length
               const isPositive = item.change_rate >= 0
 
               return (
@@ -83,6 +84,8 @@ export function WeeklySidebar({ className }: WeeklySidebarProps) {
                     "rounded-lg p-2 transition-colors",
                     isChampion
                       ? "bg-gradient-to-r from-amber-50/80 via-yellow-50/80 to-amber-50/80 border-2 border-amber-400/60 shadow-sm"
+                      : isLastPlace
+                      ? "bg-gradient-to-r from-slate-50/80 via-gray-50/80 to-slate-50/80 border-2 border-slate-400/60 shadow-sm"
                       : "bg-white/40 border border-transparent hover:bg-white/60"
                   )}
                 >
@@ -90,6 +93,12 @@ export function WeeklySidebar({ className }: WeeklySidebarProps) {
                   {isChampion && (
                     <div className="text-xs font-semibold text-amber-600 mb-2">
                       {getWeeklyTitle()}
+                    </div>
+                  )}
+                  {/* 最后一名专属标签 */}
+                  {isLastPlace && (
+                    <div className="text-xs font-semibold text-slate-600 mb-2">
+                      我是本周小丑
                     </div>
                   )}
 
