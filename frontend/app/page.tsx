@@ -15,6 +15,8 @@ const HOME_CHARTS_GROUP_ID = "home-charts"
 export default function Home() {
   const [chartRange, setChartRange] = useState<{ startIndex: number; endIndex: number } | null>(null)
   const [moreChartsOpen, setMoreChartsOpen] = useState(false)
+  /** 全局选中的资产代码：左侧榜单、年度图、周收益图联动高亮 */
+  const [selectedAssetCode, setSelectedAssetCode] = useState<string | null>(null)
 
   const handleChartRangeChange = (startIndex: number, endIndex: number) => {
     setChartRange({ startIndex, endIndex })
@@ -23,7 +25,10 @@ export default function Home() {
   return (
     <div className="flex gap-4 pl-2 pr-6 py-6 -ml-4">
       {/* 自然周榜单侧边栏：宽度约 240px，lg 以下隐藏，靠左 */}
-      <WeeklySidebar />
+      <WeeklySidebar
+        selectedAssetCode={selectedAssetCode}
+        onSelectAssetCode={setSelectedAssetCode}
+      />
 
       <div className="flex-1 min-w-0 flex flex-col">
       {/* 龙虎榜 + 年度图 + 周收益曲线区域 */}
@@ -40,12 +45,17 @@ export default function Home() {
           chartRange={chartRange ?? undefined}
           onChartRangeChange={handleChartRangeChange}
           groupId={HOME_CHARTS_GROUP_ID}
+          selectedAssetCode={selectedAssetCode}
+          onSelectedAssetCodeChange={setSelectedAssetCode}
         />
       </div>
 
       {/* 周收益曲线（以自然周为维度） */}
       <div className="border rounded-lg p-6">
-        <WeeklyReturnChart />
+        <WeeklyReturnChart
+          selectedAssetCode={selectedAssetCode}
+          onSelectedAssetCodeChange={setSelectedAssetCode}
+        />
       </div>
       </div>
 
@@ -75,6 +85,8 @@ export default function Home() {
                 chartRange={chartRange ?? undefined}
                 onChartRangeChange={handleChartRangeChange}
                 groupId={HOME_CHARTS_GROUP_ID}
+                selectedAssetCode={selectedAssetCode}
+                onSelectedAssetCodeChange={setSelectedAssetCode}
               />
             </div>
 

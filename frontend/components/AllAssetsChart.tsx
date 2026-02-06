@@ -25,6 +25,10 @@ interface AllAssetsChartProps {
   onChartRangeChange?: (startIndex: number, endIndex: number) => void
   /** 多图联动时使用相同 groupId */
   groupId?: string
+  /** 受控的选中资产代码（与左侧榜单、周收益图联动） */
+  selectedAssetCode?: string | null
+  /** 图例点击时回调，用于同步全局选中状态 */
+  onSelectedAssetCodeChange?: (code: string | null) => void
 }
 
 interface ChartDataPoint {
@@ -59,13 +63,16 @@ export function AllAssetsChart({
   chartRange,
   onChartRangeChange,
   groupId,
+  selectedAssetCode: selectedAssetCodeProp,
+  onSelectedAssetCodeChange,
 }: AllAssetsChartProps) {
   const [chartData, setChartData] = useState<ChartDataPoint[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [assets, setAssets] = useState<AssetChartData[]>([])
-  const [selectedAssetCode, setSelectedAssetCode] = useState<string | null>(null)
+  const [internalSelected, setInternalSelected] = useState<string | null>(null)
   const [range, setRange] = useState({ startIndex: 0, endIndex: 0 })
+  const selectedAssetCode = selectedAssetCodeProp ?? internalSelected
 
   useEffect(() => {
     loadChartData()
@@ -279,12 +286,11 @@ export function AllAssetsChart({
   // 处理图例点击事件
   const handleLegendClick = (e: any) => {
     const clickedCode = e.dataKey || e.value
-    if (selectedAssetCode === clickedCode) {
-      // 取消选中
-      setSelectedAssetCode(null)
+    const next = selectedAssetCode === clickedCode ? null : clickedCode
+    if (onSelectedAssetCodeChange) {
+      onSelectedAssetCodeChange(next)
     } else {
-      // 选中新的股票
-      setSelectedAssetCode(clickedCode)
+      setInternalSelected(next)
     }
   }
 

@@ -19,6 +19,10 @@ import { type User } from "@/types"
 
 interface WeeklyReturnChartProps {
   className?: string
+  /** 受控的选中资产代码（与左侧榜单、年度图联动） */
+  selectedAssetCode?: string | null
+  /** 图例点击时回调，用于同步全局选中状态 */
+  onSelectedAssetCodeChange?: (code: string | null) => void
 }
 
 interface DataPoint {
@@ -55,12 +59,17 @@ const colors = [
   "#ff8042",
 ]
 
-export function WeeklyReturnChart({ className }: WeeklyReturnChartProps) {
+export function WeeklyReturnChart({
+  className,
+  selectedAssetCode: selectedAssetCodeProp,
+  onSelectedAssetCodeChange,
+}: WeeklyReturnChartProps) {
   const [chartData, setChartData] = useState<ChartDataPoint[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [assets, setAssets] = useState<AssetWeeklyData[]>([])
-  const [selectedAssetCode, setSelectedAssetCode] = useState<string | null>(null)
+  const [internalSelected, setInternalSelected] = useState<string | null>(null)
+  const selectedAssetCode = selectedAssetCodeProp ?? internalSelected
 
   useEffect(() => {
     loadChartData()
@@ -119,10 +128,11 @@ export function WeeklyReturnChart({ className }: WeeklyReturnChartProps) {
 
   const handleLegendClick = (e: any) => {
     const clickedCode = e.dataKey || e.value
-    if (selectedAssetCode === clickedCode) {
-      setSelectedAssetCode(null)
+    const next = selectedAssetCode === clickedCode ? null : clickedCode
+    if (onSelectedAssetCodeChange) {
+      onSelectedAssetCodeChange(next)
     } else {
-      setSelectedAssetCode(clickedCode)
+      setInternalSelected(next)
     }
   }
 

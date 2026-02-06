@@ -16,9 +16,13 @@ function getWeeklyTitle(): string {
 
 interface WeeklySidebarProps {
   className?: string
+  /** 当前选中的资产代码，用于高亮 */
+  selectedAssetCode?: string | null
+  /** 点击榜单项时回调 */
+  onSelectAssetCode?: (assetCode: string | null) => void
 }
 
-export function WeeklySidebar({ className }: WeeklySidebarProps) {
+export function WeeklySidebar({ className, selectedAssetCode, onSelectAssetCode }: WeeklySidebarProps) {
   const [items, setItems] = useState<WeeklyRankingItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -42,7 +46,7 @@ export function WeeklySidebar({ className }: WeeklySidebarProps) {
   return (
     <aside
       className={cn(
-        "hidden lg:block w-[240px] shrink-0 rounded-xl overflow-hidden",
+        "hidden lg:block w-[240px] shrink-0 self-start rounded-xl overflow-hidden",
         // Glassmorphism: 半透明白 + 模糊
         "bg-white/70 backdrop-blur-[10px]",
         "border border-white/80 shadow-lg",
@@ -71,24 +75,33 @@ export function WeeklySidebar({ className }: WeeklySidebarProps) {
         )}
 
         {!loading && !error && items.length > 0 && (
-          <ul className="space-y-2 max-h-[calc(100vh-12rem)] overflow-y-auto pr-1">
+          <ul className="space-y-2 h-auto min-h-0 overflow-y-auto pr-1">
             {items.map((item) => {
               const isChampion = item.rank === 1
               const isLastPlace = item.rank === items.length
               const isPositive = item.change_rate >= 0
+              const isSelected = selectedAssetCode === item.asset_code
 
               return (
-                <li
-                  key={`${item.asset_id}-${item.rank}`}
-                  className={cn(
-                    "rounded-lg p-2 transition-colors",
-                    isChampion
-                      ? "bg-gradient-to-r from-amber-50/80 via-yellow-50/80 to-amber-50/80 border-2 border-amber-400/60 shadow-sm"
-                      : isLastPlace
-                      ? "bg-gradient-to-r from-slate-50/80 via-gray-50/80 to-slate-50/80 border-2 border-slate-400/60 shadow-sm"
-                      : "bg-white/40 border border-transparent hover:bg-white/60"
-                  )}
-                >
+                <li key={`${item.asset_id}-${item.rank}`}>
+                  <button
+                    type="button"
+                    onClick={() => onSelectAssetCode?.(isSelected ? null : item.asset_code)}
+                    className={cn(
+                      "w-full text-left rounded-lg p-2 transition-all duration-200 active:scale-[0.98]",
+                      "border cursor-pointer",
+                      isChampion
+                        ? "bg-gradient-to-r from-amber-50/80 via-yellow-50/80 to-amber-50/80 border-2 border-amber-400/60 shadow-sm hover:from-amber-50 hover:to-amber-50"
+                        : isLastPlace
+                        ? "bg-gradient-to-r from-slate-50/80 via-gray-50/80 to-slate-50/80 border-2 border-slate-400/60 shadow-sm hover:from-slate-50 hover:to-slate-50"
+                        : cn(
+                            "border-transparent hover:bg-white/40",
+                            isSelected
+                              ? "bg-white/60 ring-2 ring-primary/40 ring-inset"
+                              : "bg-white/20"
+                          )
+                    )}
+                  >
                   {/* 第一名专属标签 */}
                   {isChampion && (
                     <div className="text-xs font-semibold text-amber-600 mb-2">
@@ -155,6 +168,7 @@ export function WeeklySidebar({ className }: WeeklySidebarProps) {
                       </div>
                     </div>
                   </div>
+                  </button>
                 </li>
               )
             })}
