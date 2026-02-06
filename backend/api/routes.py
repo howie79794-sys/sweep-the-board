@@ -36,9 +36,9 @@ def get_weekly_ranking_cached(db: Session) -> list:
         if now - cached_at < 3600:  # 1小时
             return _weekly_ranking_cache["data"]
     data = calculate_weekly_rankings(db)
-    # 格式化返回（Top 5），并规范化头像 URL
+    # 格式化返回（全部），并规范化头像 URL
     result = []
-    for i, item in enumerate(data[:5]):
+    for i, item in enumerate(data):
         avatar_url = item["user"]["avatar_url"]
         if avatar_url:
             try:

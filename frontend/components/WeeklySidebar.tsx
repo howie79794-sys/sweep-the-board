@@ -71,7 +71,7 @@ export function WeeklySidebar({ className }: WeeklySidebarProps) {
         )}
 
         {!loading && !error && items.length > 0 && (
-          <ul className="space-y-2">
+          <ul className="space-y-2 max-h-[calc(100vh-12rem)] overflow-y-auto pr-1">
             {items.map((item) => {
               const isChampion = item.rank === 1
               const isPositive = item.change_rate >= 0

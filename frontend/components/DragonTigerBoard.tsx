@@ -109,7 +109,7 @@ export function DragonTigerBoard({ className }: DragonTigerBoardProps) {
   return (
     <div className={cn("space-y-4", className)}>
       <h2 className="text-2xl font-bold">核心资产龙虎榜</h2>
-      <div className="flex flex-wrap gap-6 justify-center">
+      <div className="flex flex-nowrap gap-3 justify-start overflow-x-auto pb-2">
         {userRankingsWithAssets.map((ranking, index) => {
           const rank = ranking.user_rank
           const showRankBadge = rank !== null && rank !== undefined && rank <= 3
@@ -119,30 +119,30 @@ export function DragonTigerBoard({ className }: DragonTigerBoardProps) {
           return (
             <div
               key={ranking.id}
-              className="flex flex-col items-center w-[140px]"
+              className="flex flex-col items-center shrink-0 w-[105px]"
             >
               {/* 用户头像 */}
               <UserAvatar
                 user={ranking.user}
-                size="md"
-                className="mb-2"
+                size="sm"
+                className="mb-1"
               />
               
               {/* 用户名称 */}
-              <div className="text-sm font-semibold mb-1 text-center">
+              <div className="text-xs font-semibold mb-0.5 text-center truncate w-full">
                 {ranking.user.name}
               </div>
               
               {/* 资产代码 */}
               {(ranking as any).asset && (
-                <div className="text-xs text-muted-foreground mb-1">
+                <div className="text-[10px] text-muted-foreground mb-0.5">
                   {(ranking as any).asset.code}
                 </div>
               )}
               
               {/* 资产价格 */}
               {(ranking as any).current_price !== undefined && (
-                <div className="text-lg font-bold mb-1">
+                <div className="text-sm font-bold mb-0.5">
                   ¥{((ranking as any).current_price as number).toFixed(2)}
                 </div>
               )}
@@ -150,7 +150,7 @@ export function DragonTigerBoard({ className }: DragonTigerBoardProps) {
               {/* 收益率 */}
               <div
                 className={cn(
-                  "text-sm font-semibold",
+                  "text-xs font-semibold",
                   isPositive ? "text-red-600" : "text-green-600"
                 )}
               >
@@ -159,7 +159,7 @@ export function DragonTigerBoard({ className }: DragonTigerBoardProps) {
               
               {/* 排名徽章 */}
               {showRankBadge && (
-                <div className="mt-1 text-xs font-semibold text-yellow-600">
+                <div className="mt-0.5 text-[10px] font-semibold text-yellow-600">
                   No.{rank}
                 </div>
               )}

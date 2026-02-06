@@ -18,8 +18,8 @@ export default function Home() {
   }
 
   return (
-    <div className="flex gap-6 p-6">
-      {/* 自然周榜单侧边栏：宽度约 240px，lg 以下隐藏 */}
+    <div className="flex gap-4 pl-2 pr-6 py-6 -ml-4">
+      {/* 自然周榜单侧边栏：宽度约 240px，lg 以下隐藏，靠左 */}
       <WeeklySidebar />
 
       <div className="flex-1 min-w-0 space-y-8">
