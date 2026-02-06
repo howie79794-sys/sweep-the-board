@@ -89,28 +89,26 @@ export function WeeklyReturnChart({ className }: WeeklyReturnChartProps) {
       })
 
       const chartDataArray = Array.from(dateMap.values()).sort(
-        (a, b) =>
-          new Date(String(a.date)).getTime() - new Date(String(b.date)).getTime()
+        (a, b) => {
+          const ad = String(a.date)
+          const bd = String(b.date)
+          if (ad === "基准") return -1
+          if (bd === "基准") return 1
+          return new Date(ad).getTime() - new Date(bd).getTime()
+        }
       ) as Record<string, string | number | null>[]
 
       const formattedData = chartDataArray.map((item) => {
         const dateStr = String(item.date)
+        const isBaseline = dateStr === "基准"
         return {
           ...item,
           originalDate: dateStr,
-          date: formatChartAxisDate(dateStr),
+          date: isBaseline ? "" : formatChartAxisDate(dateStr),
         }
       })
 
-      // 前置横向 0 点：所有曲线从 0% 开始；周一=周一收盘vs上周五收盘，周二=周二收盘vs上周五收盘，依此类推
-      const zeroPoint: ChartDataPoint = {
-        date: "",
-        originalDate: "",
-      }
-      assets.forEach((a: AssetWeeklyData) => {
-        zeroPoint[a.code] = 0
-      })
-      setChartData([zeroPoint, ...formattedData])
+      setChartData(formattedData)
       setError(null)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "加载周收益数据失败")
@@ -187,7 +185,7 @@ export function WeeklyReturnChart({ className }: WeeklyReturnChartProps) {
             <Tooltip
               labelFormatter={(_, payload) => {
                 const raw = (Array.isArray(payload) && payload[0]?.payload?.originalDate) as string | undefined
-                if (!raw) return "基准 (上周五)"
+                if (!raw || raw === "基准") return "基准 (上周五)"
                 return formatTooltipDate(raw)
               }}
               formatter={(value: any) => {

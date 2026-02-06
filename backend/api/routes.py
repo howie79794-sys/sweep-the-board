@@ -1419,16 +1419,15 @@ async def get_all_assets_chart_data(
 @router.get("/data/charts/weekly", tags=["data"])
 async def get_weekly_chart_data(db: Session = Depends(get_db)):
     """
-    周收益曲线：基准价为北京时间本周一之前的最后一个交易日（上周五）收盘价。
-    周一的值 = 周一收盘价相对上周五收盘价的涨跌幅（%）；
-    周二的值 = 周二收盘价相对上周五收盘价的涨跌幅（%）；依此类推至周五。
-    返回本周一至周五 5 个数据点；无数据的日期收益率为 0。
+    周收益曲线：强制所有资产从 0% 基准点对齐出发。
+    基准点：序列最前插入一点，日期标记为「基准」，收益率 0.0。
+    基准价：上周五收盘价；若获取不到（如 SH513010 等），用本周一收盘价兜底，严禁起始点非 0。
+    后续点：从第二个点起，(当日收盘 - 基准价) / 基准价 * 100。
+    本接口无缓存，每次请求实时计算。
     """
     baseline_date = get_weekly_baseline_date()
     today = get_beijing_date()
-    # 当前周周一
     current_monday = today - timedelta(days=today.weekday())
-    # 本周一至周五的 5 个日期
     week_dates = [current_monday + timedelta(days=i) for i in range(5)]
 
     assets = db.query(Asset).join(User).filter(User.is_active == True, Asset.is_core == True).all()
@@ -1439,10 +1438,31 @@ async def get_weekly_chart_data(db: Session = Depends(get_db)):
             MarketData.date <= baseline_date
         ).order_by(MarketData.date.desc()).first()
         baseline_price = baseline_data.close_price if baseline_data else None
+
         if baseline_price is None or baseline_price <= 0:
-            data_points = [{"date": d.isoformat(), "change_rate": 0.0} for d in week_dates]
+            monday_data = db.query(MarketData).filter(
+                MarketData.asset_id == asset.id,
+                MarketData.date == current_monday
+            ).first()
+            baseline_price = monday_data.close_price if monday_data else None
+            if baseline_price is None or baseline_price <= 0:
+                data_points = [{"date": "基准", "change_rate": 0.0}] + [
+                    {"date": d.isoformat(), "change_rate": 0.0} for d in week_dates
+                ]
+            else:
+                data_points = [{"date": "基准", "change_rate": 0.0}]
+                for d in week_dates:
+                    md = db.query(MarketData).filter(
+                        MarketData.asset_id == asset.id,
+                        MarketData.date == d
+                    ).first()
+                    if md:
+                        change_rate = ((md.close_price - baseline_price) / baseline_price) * 100
+                        data_points.append({"date": d.isoformat(), "change_rate": round(change_rate, 4)})
+                    else:
+                        data_points.append({"date": d.isoformat(), "change_rate": 0.0})
         else:
-            data_points = []
+            data_points = [{"date": "基准", "change_rate": 0.0}]
             for d in week_dates:
                 md = db.query(MarketData).filter(
                     MarketData.asset_id == asset.id,
@@ -1453,6 +1473,7 @@ async def get_weekly_chart_data(db: Session = Depends(get_db)):
                     data_points.append({"date": d.isoformat(), "change_rate": round(change_rate, 4)})
                 else:
                     data_points.append({"date": d.isoformat(), "change_rate": 0.0})
+
         result.append({
             "asset_id": asset.id,
             "code": asset.code,
