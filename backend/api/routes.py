@@ -1420,8 +1420,9 @@ async def get_all_assets_chart_data(
 async def get_weekly_chart_data(db: Session = Depends(get_db)):
     """
     周收益曲线：基准价为北京时间本周一之前的最后一个交易日（上周五）收盘价。
-    返回本周一至周五 5 个数据点，每日收盘价相对于该基准价的涨跌幅（%）。
-    无数据的日期收益率为 0。
+    周一的值 = 周一收盘价相对上周五收盘价的涨跌幅（%）；
+    周二的值 = 周二收盘价相对上周五收盘价的涨跌幅（%）；依此类推至周五。
+    返回本周一至周五 5 个数据点；无数据的日期收益率为 0。
     """
     baseline_date = get_weekly_baseline_date()
     today = get_beijing_date()

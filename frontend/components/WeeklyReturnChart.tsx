@@ -102,7 +102,7 @@ export function WeeklyReturnChart({ className }: WeeklyReturnChartProps) {
         }
       })
 
-      // 前置 0 点：所有收益率从 0 开始，0 点不展示日期（不算横轴第一格）
+      // 前置横向 0 点：所有曲线从 0% 开始；周一=周一收盘vs上周五收盘，周二=周二收盘vs上周五收盘，依此类推
       const zeroPoint: ChartDataPoint = {
         date: "",
         originalDate: "",
@@ -176,6 +176,7 @@ export function WeeklyReturnChart({ className }: WeeklyReturnChartProps) {
             />
             <YAxis
               scale="linear"
+              domain={[(dataMin: number) => Math.min(0, dataMin - 1), (dataMax: number) => Math.max(0, dataMax + 1)]}
               tickFormatter={(v) => `${v}%`}
               label={{
                 value: "周收益率 (%)",
