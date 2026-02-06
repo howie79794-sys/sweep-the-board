@@ -1,3 +1,5 @@
+import type { WeeklyRankingItem } from '@/types'
+
 /** API调用封装 */
 // 在浏览器环境中，使用相对路径（通过Next.js rewrites代理）
 // 在服务器端渲染时，使用环境变量或默认值
@@ -286,6 +288,7 @@ export const rankingAPI = {
     return fetchAPI<any[]>(`/api/ranking/history?${query}`)
   },
   getUserHistory: (userId: number) => fetchAPI<any[]>(`/api/ranking/users/${userId}`),
+  getWeekly: () => fetchAPI<{ items: WeeklyRankingItem[] }>('/api/ranking/weekly'),
 }
 
 // PK 池 API

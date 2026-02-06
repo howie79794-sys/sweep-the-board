@@ -14,7 +14,7 @@ import traceback
 from database.config import get_db
 from database.models import User, Asset, MarketData, Ranking, PKPool, PKPoolAsset
 from services.market_data import update_asset_data, update_all_assets_data, get_latest_trading_date, calculate_stability_metrics, custom_update_asset_data
-from services.ranking import save_rankings, get_or_set_baseline_price
+from services.ranking import save_rankings, get_or_set_baseline_price, calculate_weekly_rankings
 from services.storage import upload_avatar_file, delete_avatar, normalize_avatar_url
 from services.asset import AssetService
 from config import MAX_UPLOAD_SIZE, ALLOWED_EXTENSIONS, BASELINE_DATE
@@ -22,6 +22,41 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # 创建路由器
 router = APIRouter()
+
+# 自然周榜单缓存（1小时）
+_weekly_ranking_cache: Optional[dict] = None
+
+def get_weekly_ranking_cached(db: Session) -> list:
+    """获取自然周榜单，带1小时缓存"""
+    global _weekly_ranking_cache
+    import time as _time
+    now = _time.time()
+    if _weekly_ranking_cache is not None:
+        cached_at = _weekly_ranking_cache.get("cached_at", 0)
+        if now - cached_at < 3600:  # 1小时
+            return _weekly_ranking_cache["data"]
+    data = calculate_weekly_rankings(db)
+    # 格式化返回（Top 5），并规范化头像 URL
+    result = []
+    for i, item in enumerate(data[:5]):
+        avatar_url = item["user"]["avatar_url"]
+        if avatar_url:
+            try:
+                avatar_url = normalize_avatar_url(avatar_url)
+            except Exception:
+                avatar_url = None
+        result.append({
+            "rank": i + 1,
+            "user_id": item["user"]["id"],
+            "user_name": item["user"]["name"],
+            "avatar_url": avatar_url,
+            "asset_id": item["asset_id"],
+            "asset_code": item["code"],
+            "asset_name": item["name"],
+            "change_rate": item["change_rate"],
+        })
+    _weekly_ranking_cache = {"data": result, "cached_at": now}
+    return result
 
 # ==================== 任务追踪系统 ====================
 # 在内存中维护任务状态
@@ -1677,6 +1712,22 @@ async def get_user_rankings(
     # 实现逻辑类似上面的get_rankings，只返回用户排名
     result = await get_rankings(ranking_date, db)
     return result["user_rankings"]
+
+
+@router.get("/ranking/weekly", tags=["ranking"])
+async def get_weekly_rankings(db: Session = Depends(get_db)):
+    """
+    自然周榜单：以北京时间为准，使用上周五收盘价作为基准价，统计核心资产本周表现。
+    返回 Top 5：用户名、头像、资产代码、周涨跌幅。
+    基准价查询有 1 小时缓存。
+    """
+    try:
+        data = get_weekly_ranking_cached(db)
+        return {"items": data}
+    except Exception as e:
+        print(f"[API] 自然周榜单查询失败: {type(e).__name__}: {str(e)}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
 
 
 @router.get("/ranking/history", tags=["ranking"])

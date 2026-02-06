@@ -6,6 +6,7 @@ import { AllAssetsChart } from "@/components/AllAssetsChart"
 import { PERatioChart } from "@/components/PERatioChart"
 import { PBRatioChart } from "@/components/PBRatioChart"
 import { AssetSnapshotTable } from "@/components/AssetSnapshotTable"
+import { WeeklySidebar } from "@/components/WeeklySidebar"
 
 const HOME_CHARTS_GROUP_ID = "home-charts"
 
@@ -17,7 +18,11 @@ export default function Home() {
   }
 
   return (
-    <div className="space-y-8 p-6">
+    <div className="flex gap-6 p-6">
+      {/* 自然周榜单侧边栏：宽度约 240px，lg 以下隐藏 */}
+      <WeeklySidebar />
+
+      <div className="flex-1 min-w-0 space-y-8">
       {/* 核心资产龙虎榜 */}
       <div>
         <DragonTigerBoard />
@@ -64,6 +69,7 @@ export default function Home() {
       {/* 核心资产明细表 */}
       <div className="border rounded-lg p-6">
         <AssetSnapshotTable />
+      </div>
       </div>
     </div>
   )

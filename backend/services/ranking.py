@@ -2,11 +2,33 @@
 专门存放计算龙虎榜排名的业务逻辑
 """
 from sqlalchemy.orm import Session
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from typing import List, Dict, Optional
+import time
 
 from database.models import Asset, MarketData, Ranking, User
 from config import BASELINE_DATE
+
+
+def get_beijing_date() -> date:
+    """获取当前北京时间的日期"""
+    utc_now = datetime.now(timezone.utc)
+    beijing_tz = timezone(timedelta(hours=8))
+    beijing_time = utc_now.astimezone(beijing_tz)
+    return beijing_time.date()
+
+
+def get_weekly_baseline_date() -> date:
+    """
+    获取自然周榜单的基准日期（上周五或最近的有效交易日）
+    以北京时间为准，本周的基准价为上周五收盘价
+    """
+    today = get_beijing_date()
+    # 当前周的周一
+    current_monday = today - timedelta(days=today.weekday())
+    # 上周五 = 当前周一 - 3 天
+    last_friday = current_monday - timedelta(days=3)
+    return last_friday
 
 
 def calculate_change_rate(current_price: float, baseline_price: float) -> float:
@@ -198,6 +220,75 @@ def calculate_user_rankings(target_date: date, db: Session) -> List[Dict]:
     print(f"[排名计算] 用户排名计算完成: 有涨跌幅 {len(user_best_rates)} 个，缺少基准价 {len(users_without_rate)} 个")
     
     return result
+
+
+def get_asset_weekly_baseline_price(asset_id: int, baseline_date: date, db: Session) -> Optional[float]:
+    """
+    获取资产在基准日（或基准日之前最近有效交易日）的收盘价
+    用于自然周榜单的基准价计算
+    """
+    baseline_data = db.query(MarketData).filter(
+        MarketData.asset_id == asset_id,
+        MarketData.date <= baseline_date
+    ).order_by(MarketData.date.desc()).first()
+    if baseline_data:
+        return baseline_data.close_price
+    return None
+
+
+def calculate_weekly_rankings(db: Session) -> List[Dict]:
+    """
+    计算自然周榜单（核心资产本周表现）
+    基准价：上周五（或最近有效交易日）收盘价
+    收益率 = (现价 - 基准价) / 基准价
+    返回按涨跌幅降序排列的列表
+    """
+    baseline_date = get_weekly_baseline_date()
+    # 获取最新交易日（现价日期）
+    from services.market_data import get_latest_trading_date
+    latest_date = get_latest_trading_date(db)
+
+    # 获取所有活跃的核心资产
+    assets = db.query(Asset).join(User).filter(
+        User.is_active == True,
+        Asset.is_core == True
+    ).all()
+
+    results = []
+    for asset in assets:
+        baseline_price = get_asset_weekly_baseline_price(asset.id, baseline_date, db)
+        if baseline_price is None or baseline_price <= 0:
+            continue
+
+        current_data = db.query(MarketData).filter(
+            MarketData.asset_id == asset.id,
+            MarketData.date <= latest_date
+        ).order_by(MarketData.date.desc()).first()
+        if not current_data:
+            continue
+
+        current_price = current_data.close_price
+        change_rate = ((current_price - baseline_price) / baseline_price) * 100
+
+        results.append({
+            "asset_id": asset.id,
+            "code": asset.code,
+            "name": asset.name,
+            "change_rate": change_rate,
+            "current_price": current_price,
+            "baseline_price": baseline_price,
+            "baseline_date": baseline_date.isoformat(),
+            "user": {
+                "id": asset.user.id,
+                "name": asset.user.name,
+                "avatar_url": asset.user.avatar_url,
+            },
+            "asset": asset,
+        })
+
+    # 按涨跌幅降序排序
+    results.sort(key=lambda x: x["change_rate"], reverse=True)
+    return results
 
 
 def save_rankings(target_date: date, db: Session) -> bool:

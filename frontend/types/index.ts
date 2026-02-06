@@ -56,6 +56,18 @@ export interface Ranking {
   user?: User;
 }
 
+// 自然周榜单项
+export interface WeeklyRankingItem {
+  rank: number;
+  user_id: number;
+  user_name: string;
+  avatar_url?: string | null;
+  asset_id: number;
+  asset_code: string;
+  asset_name: string;
+  change_rate: number;
+}
+
 // 排名响应类型
 export interface RankingResponse {
   asset_rankings: (Ranking & { asset: Asset; user: User })[];
