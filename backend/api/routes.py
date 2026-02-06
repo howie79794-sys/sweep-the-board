@@ -14,7 +14,7 @@ import traceback
 from database.config import get_db
 from database.models import User, Asset, MarketData, Ranking, PKPool, PKPoolAsset
 from services.market_data import update_asset_data, update_all_assets_data, get_latest_trading_date, calculate_stability_metrics, custom_update_asset_data
-from services.ranking import save_rankings, get_or_set_baseline_price, calculate_weekly_rankings
+from services.ranking import save_rankings, get_or_set_baseline_price, calculate_weekly_rankings, get_weekly_baseline_date, get_beijing_date
 from services.storage import upload_avatar_file, delete_avatar, normalize_avatar_url
 from services.asset import AssetService
 from config import MAX_UPLOAD_SIZE, ALLOWED_EXTENSIONS, BASELINE_DATE
@@ -1413,6 +1413,56 @@ async def get_all_assets_chart_data(
                 "data": data_points
             })
     
+    return result
+
+
+@router.get("/data/charts/weekly", tags=["data"])
+async def get_weekly_chart_data(db: Session = Depends(get_db)):
+    """
+    周收益曲线：基准价为北京时间本周一之前的最后一个交易日（上周五）收盘价。
+    返回本周一至周五 5 个数据点，每日收盘价相对于该基准价的涨跌幅（%）。
+    无数据的日期收益率为 0。
+    """
+    baseline_date = get_weekly_baseline_date()
+    today = get_beijing_date()
+    # 当前周周一
+    current_monday = today - timedelta(days=today.weekday())
+    # 本周一至周五的 5 个日期
+    week_dates = [current_monday + timedelta(days=i) for i in range(5)]
+
+    assets = db.query(Asset).join(User).filter(User.is_active == True, Asset.is_core == True).all()
+    result = []
+    for asset in assets:
+        baseline_data = db.query(MarketData).filter(
+            MarketData.asset_id == asset.id,
+            MarketData.date <= baseline_date
+        ).order_by(MarketData.date.desc()).first()
+        baseline_price = baseline_data.close_price if baseline_data else None
+        if baseline_price is None or baseline_price <= 0:
+            data_points = [{"date": d.isoformat(), "change_rate": 0.0} for d in week_dates]
+        else:
+            data_points = []
+            for d in week_dates:
+                md = db.query(MarketData).filter(
+                    MarketData.asset_id == asset.id,
+                    MarketData.date == d
+                ).first()
+                if md:
+                    change_rate = ((md.close_price - baseline_price) / baseline_price) * 100
+                    data_points.append({"date": d.isoformat(), "change_rate": round(change_rate, 4)})
+                else:
+                    data_points.append({"date": d.isoformat(), "change_rate": 0.0})
+        result.append({
+            "asset_id": asset.id,
+            "code": asset.code,
+            "name": asset.name,
+            "user": {
+                "id": asset.user.id,
+                "name": asset.user.name,
+                "avatar_url": normalize_avatar_url(asset.user.avatar_url) if asset.user.avatar_url else None,
+            },
+            "data": data_points,
+        })
     return result
 
 

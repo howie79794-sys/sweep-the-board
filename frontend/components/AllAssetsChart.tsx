@@ -293,7 +293,7 @@ export function AllAssetsChart({
       <div className="mb-4">
         <h3 className="text-lg font-semibold">
           {showChangeRate
-            ? "累计收益率趋势追踪图 (自基准日以来)"
+            ? "年度收益率追踪图"
             : "股价对数趋势分析图 (Log-Scale)"}
         </h3>
       </div>
