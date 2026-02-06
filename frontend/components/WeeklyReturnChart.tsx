@@ -101,7 +101,16 @@ export function WeeklyReturnChart({ className }: WeeklyReturnChartProps) {
           date: formatChartAxisDate(dateStr),
         }
       })
-      setChartData(formattedData)
+
+      // 前置 0 点：所有收益率从 0 开始，0 点不展示日期（不算横轴第一格）
+      const zeroPoint: ChartDataPoint = {
+        date: "",
+        originalDate: "",
+      }
+      assets.forEach((a: AssetWeeklyData) => {
+        zeroPoint[a.code] = 0
+      })
+      setChartData([zeroPoint, ...formattedData])
       setError(null)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "加载周收益数据失败")
@@ -163,6 +172,7 @@ export function WeeklyReturnChart({ className }: WeeklyReturnChartProps) {
               dataKey="date"
               tick={{ fontSize: 12 }}
               interval={0}
+              tickFormatter={(value, index) => (index === 0 ? "" : value)}
             />
             <YAxis
               scale="linear"
@@ -176,7 +186,8 @@ export function WeeklyReturnChart({ className }: WeeklyReturnChartProps) {
             <Tooltip
               labelFormatter={(_, payload) => {
                 const raw = (Array.isArray(payload) && payload[0]?.payload?.originalDate) as string | undefined
-                return raw ? formatTooltipDate(raw) : ""
+                if (!raw) return "基准 (上周五)"
+                return formatTooltipDate(raw)
               }}
               formatter={(value: any) => {
                 const numValue = typeof value === "number" ? value : parseFloat(String(value))
@@ -237,7 +248,7 @@ export function WeeklyReturnChart({ className }: WeeklyReturnChartProps) {
               stroke="#8884d8"
               startIndex={brushStart}
               endIndex={brushEnd}
-              tickFormatter={(value) => value}
+              tickFormatter={(value, index) => (index === 0 ? "" : value)}
             />
           </LineChart>
         </ResponsiveContainer>
