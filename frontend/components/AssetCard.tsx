@@ -2,8 +2,16 @@
 
 import { type Asset } from "@/types"
 import { UserAvatar } from "@/components/UserAvatar"
-import { formatPercent, formatNumber } from "@/lib/utils"
-import { cn } from "@/lib/utils"
+import { MedalBadge } from "@/components/ui/medal-badge"
+import {
+  formatPercent,
+  formatNumber,
+  cn,
+  getChangeColor,
+  getChangeArrow,
+  isTopThree,
+  getMedalConfig,
+} from "@/lib/utils"
 
 interface AssetCardProps {
   asset: Asset & { user?: { id: number; name: string; avatar_url?: string } }
@@ -29,11 +37,17 @@ export function AssetCard({
   highlight = false,
   className,
 }: AssetCardProps) {
+  const medalConfig = getMedalConfig(rank)
+  const isMedal = medalConfig !== null
+  const showHighlight = highlight || isMedal
+
   return (
     <div
       className={cn(
         "border rounded-lg p-4 transition-all",
-        highlight
+        isMedal
+          ? cn(medalConfig.bgClass, medalConfig.borderClass, "shadow-lg")
+          : showHighlight
           ? "bg-gradient-to-r from-yellow-50 to-orange-50 border-yellow-300 shadow-lg"
           : "bg-card hover:shadow-md",
         className
@@ -42,31 +56,19 @@ export function AssetCard({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4 flex-1">
           {rank !== undefined && (
-            <div
-              className={cn(
-                "text-2xl font-bold",
-                highlight ? "text-yellow-600" : "text-muted-foreground"
-              )}
-            >
-              #{rank}
-            </div>
+            <MedalBadge rank={rank} variant="full" size="md" />
           )}
           <div className="flex-1">
-            <div className="flex items-center gap-2 mb-1">
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
               <div className="font-semibold text-lg">{asset.name}</div>
               {asset.is_core && (
-                <span className="text-xs px-2 py-0.5 bg-amber-500 text-white rounded">
+                <span className="text-xs px-2 py-0.5 bg-gradient-to-r from-yellow-400 to-orange-400 text-white font-semibold rounded">
                   核心
                 </span>
               )}
               <span className="text-xs px-2 py-0.5 bg-secondary rounded">
                 {assetTypeLabels[asset.asset_type] || asset.asset_type}
               </span>
-              {asset.is_core && (
-                <span className="text-xs px-2 py-0.5 bg-gradient-to-r from-yellow-400 to-orange-400 text-white font-semibold rounded">
-                  核心
-                </span>
-              )}
             </div>
             <div className="text-sm text-muted-foreground space-y-1">
               <div>
@@ -95,15 +97,16 @@ export function AssetCard({
             <>
               <div
                 className={cn(
-                  "text-2xl font-bold",
-                  changeRate >= 0 ? "text-green-600" : "text-red-600"
+                  "text-2xl font-bold inline-flex items-center gap-1",
+                  getChangeColor(changeRate)
                 )}
               >
-                {formatPercent(changeRate)}
+                <span aria-hidden="true">{getChangeArrow(changeRate)}</span>
+                <span>{formatPercent(changeRate)}</span>
               </div>
-              {highlight && (
-                <div className="text-sm text-yellow-600 font-semibold mt-1">
-                  当日冠军 🏆
+              {isMedal && (
+                <div className={cn("text-sm font-semibold mt-1", medalConfig.textClass)}>
+                  {medalConfig.emoji} {medalConfig.label}
                 </div>
               )}
             </>

@@ -1,7 +1,19 @@
 """数据库模型定义
 存放所有数据库表结构定义（User, Asset, MarketData, Ranking）
 """
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Float, Date, ForeignKey, Text, UniqueConstraint
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    Boolean,
+    DateTime,
+    Float,
+    Date,
+    ForeignKey,
+    Text,
+    UniqueConstraint,
+    Index,
+)
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database.config import Base
@@ -15,7 +27,7 @@ class User(Base):
     name = Column(String, nullable=False)
     avatar_url = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    is_active = Column(Boolean, default=True)
+    is_active = Column(Boolean, default=True, index=True)
 
     # 关系
     assets = relationship("Asset", back_populates="user", cascade="all, delete-orphan")
@@ -27,7 +39,7 @@ class Asset(Base):
     __tablename__ = "assets"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     asset_type = Column(String, nullable=False)  # stock, fund, futures, forex
     market = Column(String, nullable=False)
     code = Column(String, nullable=False)
@@ -36,8 +48,15 @@ class Asset(Base):
     baseline_date = Column(Date, default="2026-01-05")
     start_date = Column(Date, default="2026-01-05")
     end_date = Column(Date, default="2026-12-31")
-    is_core = Column(Boolean, default=False, nullable=False)  # 是否为核心资产（一用户一心）
+    is_core = Column(Boolean, default=False, nullable=False, index=True)  # 是否为核心资产（一用户一心）
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        # 复合索引：龙虎榜首页常按 (user_id, is_core=True) 拉核心资产
+        Index("idx_assets_user_is_core", "user_id", "is_core"),
+        # 复合索引：admin 页常按 (user_id, asset_type) 过滤
+        Index("idx_assets_user_type", "user_id", "asset_type"),
+    )
 
     # 关系
     user = relationship("User", back_populates="assets")
@@ -90,6 +109,13 @@ class MarketData(Base):
     additional_data = Column(Text, nullable=True)  # JSON string
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    __table_args__ = (
+        # 唯一复合索引：同一资产同一天只能有一条记录（顺便加速 (asset_id, date) 查询）
+        UniqueConstraint("asset_id", "date", name="uniq_market_data_asset_date"),
+        # 单列索引：日历视图、快照查询常按 date 扫
+        Index("idx_market_data_date", "date"),
+    )
+
     # 关系
     asset = relationship("Asset", back_populates="market_data")
 
@@ -107,6 +133,17 @@ class Ranking(Base):
     change_rate = Column(Float, nullable=True)
     rank_type = Column(String, nullable=True)  # asset_rank, user_rank
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        # 复合索引：首页排行榜按 (date, change_rate DESC) 排序+取前 N
+        Index("idx_rankings_date_change_rate", "date", "change_rate"),
+        # 用户历史排名查询：(user_id, date)
+        Index("idx_rankings_user_date", "user_id", "date"),
+        # 资产历史排名查询：(asset_id, date)
+        Index("idx_rankings_asset_date", "asset_id", "date"),
+        # 单独 date 索引（按日期切片）
+        Index("idx_rankings_date", "date"),
+    )
 
     # 关系
     asset = relationship("Asset", back_populates="rankings")

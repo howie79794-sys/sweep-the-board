@@ -1,6 +1,7 @@
 """市场数据服务
 专门存放调用外部接口（如 yfinance）获取市场数据的逻辑
 """
+import logging
 import pandas as pd
 import numpy as np
 from datetime import date, datetime, timedelta, timezone
@@ -14,6 +15,9 @@ import re
 from sqlalchemy.orm import Session
 from database.models import Asset, MarketData
 from config import BASELINE_DATE
+from services._resilience import with_retry, ExternalAPIError
+
+logger = logging.getLogger(__name__)
 
 
 def get_beijing_time() -> datetime:
@@ -173,6 +177,87 @@ except ImportError:
 class YFinanceRateLimitError(RuntimeError):
     """yfinance 触发频率限制时抛出的异常。"""
     pass
+
+
+# ============================================================
+# 外部数据源调用的容错性封装
+# ============================================================
+# 所有真正打外部接口的调用都通过下面这些函数走，自带重试 + 超时。
+# 业务函数 fetch_stock_data_akshare/yfinance/baostock 等只需调用这些 wrapper。
+# ============================================================
+
+if AKSHARE_AVAILABLE:
+    @with_retry(timeout=30, attempts=3, source="akshare")
+    def _ak_stock_zh_a_hist(symbol: str, start_date: str, end_date: str):
+        return ak.stock_zh_a_hist(
+            symbol=symbol, start_date=start_date, end_date=end_date, adjust="qfq"
+        )
+
+    @with_retry(timeout=20, attempts=3, source="akshare")
+    def _ak_futures_main_relation(symbol: str):
+        return ak.futures_main_relation(symbol=symbol)
+
+    @with_retry(timeout=30, attempts=3, source="akshare")
+    def _ak_futures_zh_daily_sina(symbol: str, start_date: str, end_date: str):
+        return ak.futures_zh_daily_sina(
+            symbol=symbol, start_date=start_date, end_date=end_date
+        )
+
+    @with_retry(timeout=20, attempts=2, source="akshare")
+    def _ak_get_cffex_daily(target_date: str):
+        return ak.get_cffex_daily(date=target_date)
+
+    @with_retry(timeout=30, attempts=3, source="akshare")
+    def _ak_fund_etf_hist_sina(code: str):
+        return ak.fund_etf_hist_sina(code)
+
+    @with_retry(timeout=30, attempts=3, source="akshare")
+    def _ak_fund_open_fund_info_em(*args, **kwargs):
+        return ak.fund_open_fund_info_em(*args, **kwargs)
+else:
+    def _ak_stock_zh_a_hist(*args, **kwargs):  # type: ignore
+        raise ExternalAPIError("akshare", "akshare 未安装")
+
+    def _ak_futures_main_relation(*args, **kwargs):  # type: ignore
+        raise ExternalAPIError("akshare", "akshare 未安装")
+
+    def _ak_futures_zh_daily_sina(*args, **kwargs):  # type: ignore
+        raise ExternalAPIError("akshare", "akshare 未安装")
+
+    def _ak_get_cffex_daily(*args, **kwargs):  # type: ignore
+        raise ExternalAPIError("akshare", "akshare 未安装")
+
+    def _ak_fund_etf_hist_sina(*args, **kwargs):  # type: ignore
+        raise ExternalAPIError("akshare", "akshare 未安装")
+
+    def _ak_fund_open_fund_info_em(*args, **kwargs):  # type: ignore
+        raise ExternalAPIError("akshare", "akshare 未安装")
+
+
+if YFINANCE_AVAILABLE:
+    @with_retry(timeout=30, attempts=3, source="yfinance")
+    def _yf_ticker_history(ticker, **kwargs):
+        """对 yfinance Ticker.history 的容错封装"""
+        return ticker.history(**kwargs)
+
+    @with_retry(timeout=15, attempts=2, source="yfinance")
+    def _yf_ticker_info(ticker):
+        return ticker.info
+else:
+    def _yf_ticker_history(*args, **kwargs):  # type: ignore
+        raise ExternalAPIError("yfinance", "yfinance 未安装")
+
+    def _yf_ticker_info(*args, **kwargs):  # type: ignore
+        raise ExternalAPIError("yfinance", "yfinance 未安装")
+
+
+if BAOSTOCK_AVAILABLE:
+    @with_retry(timeout=30, attempts=3, source="baostock")
+    def _bs_query_history_k_data_plus(*args, **kwargs):
+        return bs.query_history_k_data_plus(*args, **kwargs)
+else:
+    def _bs_query_history_k_data_plus(*args, **kwargs):  # type: ignore
+        raise ExternalAPIError("baostock", "baostock 未安装")
 
 
 def normalize_stock_code(code: str) -> str:
@@ -462,7 +547,7 @@ def fetch_realtime_price_yfinance(code: str) -> Optional[pd.DataFrame]:
         
         # 方法2: 尝试使用 history(period='1d') 获取今天的数据
         try:
-            df = ticker.history(period='1d')
+            df = _yf_ticker_history(ticker, period='1d')
             if df is not None and not df.empty:
                 # 重置索引，将 Date 作为列
                 df = df.reset_index()
@@ -529,7 +614,10 @@ def fetch_stock_data_akshare(code: str, start_date: str, end_date: str) -> Optio
 
     try:
         print(f"[市场数据] [akshare] 获取A股数据: symbol={symbol}, start_date={start_date}, end_date={end_date}")
-        df = ak.stock_zh_a_hist(symbol=symbol, start_date=start_date, end_date=end_date, adjust="qfq")
+        df = _ak_stock_zh_a_hist(symbol, start_date, end_date)
+    except ExternalAPIError as e:
+        logger.error("[akshare] 获取A股数据最终失败: %s", e)
+        return None
     except Exception as e:
         print(f"[市场数据] [akshare] 获取A股数据失败: {type(e).__name__}: {str(e)}")
         return None
@@ -598,7 +686,7 @@ def resolve_futures_main_contract(code: str) -> Optional[str]:
     # 尝试使用 futures_main_relation 获取主力合约
     try:
         # 获取主力合约关系表
-        main_relation_df = ak.futures_main_relation(symbol=base_symbol)
+        main_relation_df = _ak_futures_main_relation(base_symbol)
         if main_relation_df is not None and not main_relation_df.empty:
             # 尝试获取主力合约代码
             # 主力合约关系表通常包含 'symbol', 'main_contract' 等列
@@ -667,16 +755,16 @@ def fetch_futures_data_akshare(code: str, start_date: str, end_date: str) -> Opt
             # 将日期格式转换为 YYYYMMDD（akshare 期货接口要求）
             start_dt = start_date.replace("-", "")
             end_dt = end_date.replace("-", "")
-            df = ak.futures_zh_daily_sina(symbol=main_contract, start_date=start_dt, end_date=end_dt)
+            df = _ak_futures_zh_daily_sina(main_contract, start_dt, end_dt)
             if df is not None and not df.empty:
                 print(f"[市场数据] [akshare] 使用 futures_zh_daily_sina 成功")
         except Exception as e:
             print(f"[市场数据] [akshare] futures_zh_daily_sina 失败: {str(e)}")
-        
+
         # 方法2: 如果方法1失败，尝试 get_cffex_daily（中金所接口）
         if df is None or df.empty:
             try:
-                df = ak.get_cffex_daily(date=end_date.replace("-", ""))
+                df = _ak_get_cffex_daily(end_date.replace("-", ""))
                 if df is not None and not df.empty:
                     # 过滤出对应的合约
                     base_symbol = main_contract[:2]  # IF88 -> IF
@@ -870,9 +958,9 @@ def fetch_stock_data_yfinance(code: str, start_date: str, end_date: str, use_rea
             except Exception as e:
                 print(f"[市场数据] [yfinance] fast_info 获取失败: {type(e).__name__}: {str(e)}，降级使用 history()")
         
-        # 降级使用 history() 方法
+        # 降级使用 history() 方法（带重试 + 超时保护）
         try:
-            df = ticker.history(start=start_date, end=end_date)
+            df = _yf_ticker_history(ticker, start=start_date, end=end_date)
         except Exception as e:
             error_type = type(e).__name__
             error_msg = str(e)
@@ -1001,9 +1089,9 @@ def fetch_stock_data_baostock(code: str, start_date: str, end_date: str) -> Opti
                 traceback.print_exc()
                 return None
             
-            # 获取数据（添加异常捕获，防止网络错误导致崩溃）
+            # 获取数据（添加异常捕获 + 重试 + 超时保护，防止网络错误导致崩溃）
             try:
-                rs = bs.query_history_k_data_plus(
+                rs = _bs_query_history_k_data_plus(
                     bs_code,
                     "date,open,high,low,close,preclose,volume,amount,adjustflag,turn,pctChg,isST",
                     start_date=start_dt,
@@ -1350,10 +1438,10 @@ def fetch_fund_data(code: str, start_date: str, end_date: str) -> Optional[pd.Da
     if is_six_digit:
         print(f"[市场数据] [基金] 检测到6位数字代码，先尝试场内ETF数据接口")
         try:
-            # 使用 ak.fund_etf_hist_sina 获取场内ETF数据
+            # 使用 ak.fund_etf_hist_sina 获取场内ETF数据（带重试 + 超时保护）
             # 该函数只接受基金代码作为位置参数，返回所有历史数据
             # 注意：根据 AkShare 最新版本，该函数只接受位置参数，不接受关键字参数
-            df = ak.fund_etf_hist_sina(normalized_code)
+            df = _ak_fund_etf_hist_sina(normalized_code)
             
             if df is not None and not df.empty:
                 # 标准化列名
@@ -1399,10 +1487,10 @@ def fetch_fund_data(code: str, start_date: str, end_date: str) -> Optional[pd.Da
             # 根据 AkShare 最新版本，尝试使用 symbol 参数（如果失败则使用位置参数）
             # indicator 可选值："单位净值走势", "累计净值走势", "累计收益率走势", "同类排名走势", "同类平均走势"
             try:
-                df = ak.fund_open_fund_info_em(symbol=normalized_code, indicator="单位净值走势")
+                df = _ak_fund_open_fund_info_em(symbol=normalized_code, indicator="单位净值走势")
             except TypeError:
                 # 如果 symbol 参数失败，尝试位置参数
-                df = ak.fund_open_fund_info_em(normalized_code, "单位净值走势")
+                df = _ak_fund_open_fund_info_em(normalized_code, "单位净值走势")
             
             if df is not None and not df.empty:
                 print(f"[市场数据] [基金] 获取到原始数据 {len(df)} 条，列名: {df.columns.tolist()}")

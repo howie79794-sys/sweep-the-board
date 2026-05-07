@@ -1,42 +1,32 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { rankingAPI } from "@/lib/api"
 import { UserAvatar } from "@/components/UserAvatar"
-import { type RankingResponse } from "@/types"
-import { formatPercent } from "@/lib/utils"
-import { cn } from "@/lib/utils"
+import { LeaderboardSkeleton } from "@/components/ui/skeleton"
+import { useRankings } from "@/lib/hooks"
+import {
+  formatPercent,
+  cn,
+  getChangeArrow,
+  getHeatmapColor,
+  getMedalConfig,
+  isTopThree,
+} from "@/lib/utils"
 
 interface DragonTigerBoardProps {
   className?: string
 }
 
 export function DragonTigerBoard({ className }: DragonTigerBoardProps) {
-  const [rankings, setRankings] = useState<RankingResponse | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const { data: rankings, error: swrError, isLoading, mutate } = useRankings()
+  const error = swrError ? (swrError.message || "加载排名失败") : null
 
-  useEffect(() => {
-    loadRankings()
-  }, [])
+  const loadRankings = () => mutate()
 
-  const loadRankings = async () => {
-    try {
-      setLoading(true)
-      const data = await rankingAPI.getAll()
-      setRankings(data)
-      setError(null)
-    } catch (err: any) {
-      setError(err.message || "加载排名失败")
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  if (loading) {
+  if (isLoading && !rankings) {
     return (
-      <div className={cn("text-center py-12", className)}>
-        <p className="text-muted-foreground">加载中...</p>
+      <div className={cn("space-y-4", className)}>
+        <h2 className="text-2xl font-bold">核心资产龙虎榜</h2>
+        <LeaderboardSkeleton />
       </div>
     )
   }
@@ -110,59 +100,92 @@ export function DragonTigerBoard({ className }: DragonTigerBoardProps) {
     <div className={cn("space-y-4", className)}>
       <h2 className="text-2xl font-bold">核心资产龙虎榜</h2>
       <div className="flex flex-nowrap gap-3 justify-center overflow-x-auto pb-2">
-        {userRankingsWithAssets.map((ranking, index) => {
+        {userRankingsWithAssets.map((ranking) => {
           const rank = ranking.user_rank
-          const showRankBadge = rank !== null && rank !== undefined && rank <= 3
+          const isMedal = isTopThree(rank)
+          const medalConfig = getMedalConfig(rank)
           const changeRate = ranking.change_rate ?? 0
-          const isPositive = changeRate >= 0
 
           return (
             <div
               key={ranking.id}
-              className="flex flex-col items-center shrink-0 w-[105px]"
+              className={cn(
+                "group flex flex-col items-center shrink-0 w-[110px] rounded-xl p-2 transition-all duration-300",
+                isMedal && medalConfig
+                  ? cn(
+                      medalConfig.bgClass,
+                      "border-2",
+                      medalConfig.borderClass,
+                      medalConfig.ringClass,
+                      "shadow-md hover:shadow-xl hover:-translate-y-1"
+                    )
+                  : "border border-transparent hover:border-muted hover:bg-muted/30"
+              )}
             >
+              {/* 奖牌（前三名） / 序号（其他） */}
+              <div className="mb-1 h-5 flex items-center justify-center">
+                {isMedal && medalConfig ? (
+                  <span
+                    className="text-xl leading-none animate-bounce-slow"
+                    aria-label={`第${rank}名：${medalConfig.label}`}
+                  >
+                    {medalConfig.emoji}
+                  </span>
+                ) : rank ? (
+                  <span className="text-[10px] text-muted-foreground font-medium">
+                    No.{rank}
+                  </span>
+                ) : null}
+              </div>
+
               {/* 用户头像 */}
               <UserAvatar
                 user={ranking.user}
                 size="sm"
-                className="mb-1"
+                className={cn(
+                  "mb-1 transition-transform group-hover:scale-110",
+                  isMedal && "ring-2 ring-offset-1",
+                  isMedal && rank === 1 && "ring-amber-400",
+                  isMedal && rank === 2 && "ring-slate-400",
+                  isMedal && rank === 3 && "ring-orange-400"
+                )}
               />
-              
+
               {/* 用户名称 */}
-              <div className="text-xs font-semibold mb-0.5 text-center truncate w-full">
+              <div
+                className={cn(
+                  "text-xs font-semibold mb-0.5 text-center truncate w-full",
+                  isMedal && medalConfig?.textClass
+                )}
+              >
                 {ranking.user.name}
               </div>
-              
+
               {/* 资产代码 */}
               {(ranking as any).asset && (
                 <div className="text-[10px] text-muted-foreground mb-0.5">
                   {(ranking as any).asset.code}
                 </div>
               )}
-              
+
               {/* 资产价格 */}
               {(ranking as any).current_price !== undefined && (
-                <div className="text-sm font-bold mb-0.5">
+                <div className="text-sm font-bold mb-1">
                   ¥{((ranking as any).current_price as number).toFixed(2)}
                 </div>
               )}
-              
-              {/* 收益率 */}
+
+              {/* 涨跌幅热力色徽章（核心视觉升级） */}
               <div
                 className={cn(
-                  "text-xs font-semibold",
-                  isPositive ? "text-red-600" : "text-green-600"
+                  "px-2 py-0.5 rounded-full text-xs font-bold inline-flex items-center gap-0.5",
+                  getHeatmapColor(changeRate)
                 )}
+                title={`${formatPercent(changeRate)}`}
               >
-                {formatPercent(changeRate)}
+                <span aria-hidden="true">{getChangeArrow(changeRate)}</span>
+                <span>{formatPercent(changeRate)}</span>
               </div>
-              
-              {/* 排名徽章 */}
-              {showRankBadge && (
-                <div className="mt-0.5 text-[10px] font-semibold text-yellow-600">
-                  No.{rank}
-                </div>
-              )}
             </div>
           )
         })}

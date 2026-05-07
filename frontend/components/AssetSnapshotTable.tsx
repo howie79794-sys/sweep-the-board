@@ -1,11 +1,11 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { dataAPI } from "@/lib/api"
-import { formatPercent, formatNumber } from "@/lib/utils"
-import { cn } from "@/lib/utils"
+import { useState } from "react"
+import { useSnapshot } from "@/lib/hooks"
+import { formatPercent, formatNumber, cn, getChangeColor } from "@/lib/utils"
 import { UserAvatar } from "@/components/UserAvatar"
 import { StabilityTooltip } from "@/components/StabilityTooltip"
+import { TableSkeleton } from "@/components/ui/skeleton"
 
 interface SnapshotData {
   asset_id: number
@@ -37,30 +37,15 @@ type SortField = "baseline_price" | "latest_close_price" | "market_cap" | "eps_f
 type SortDirection = "asc" | "desc"
 
 export function AssetSnapshotTable({ className }: { className?: string }) {
-  const [data, setData] = useState<SnapshotData[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const { data: snapshotData, error: swrError, isLoading, mutate } = useSnapshot()
+  const data = (snapshotData as SnapshotData[] | undefined) ?? []
+  const loading = isLoading && data.length === 0
+  const error = swrError ? (swrError instanceof Error ? swrError.message : "加载数据失败") : null
   // 默认按累计收益从高到低排序
   const [sortField, setSortField] = useState<SortField>("change_rate")
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc")
 
-  useEffect(() => {
-    loadData()
-  }, [])
-
-  const loadData = async () => {
-    try {
-      setLoading(true)
-      const snapshotData = await dataAPI.getSnapshotData()
-      setData(snapshotData)
-      setError(null)
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : "加载数据失败"
-      setError(errorMessage)
-    } finally {
-      setLoading(false)
-    }
-  }
+  const loadData = () => mutate()
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -113,8 +98,8 @@ export function AssetSnapshotTable({ className }: { className?: string }) {
 
   if (loading) {
     return (
-      <div className={cn("p-8 text-center", className)}>
-        <p className="text-muted-foreground">加载数据中...</p>
+      <div className={cn("p-4", className)}>
+        <TableSkeleton rows={8} cols={7} />
       </div>
     )
   }
@@ -122,7 +107,13 @@ export function AssetSnapshotTable({ className }: { className?: string }) {
   if (error) {
     return (
       <div className={cn("p-8 text-center", className)}>
-        <p className="text-destructive">{error}</p>
+        <p className="text-destructive mb-3">{error}</p>
+        <button
+          onClick={() => loadData()}
+          className="px-4 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90 transition-colors text-sm"
+        >
+          重试
+        </button>
       </div>
     )
   }
@@ -219,11 +210,16 @@ export function AssetSnapshotTable({ className }: { className?: string }) {
         </thead>
         <tbody>
           {sortedData.map((item) => {
-            // 累计收益颜色：正数或0为红色，负数为绿色
-            const changeRateColor = item.change_rate !== null && item.change_rate < 0 ? "text-green-600" : "text-red-600"
-            
-            // 涨跌幅颜色：正数为红色，负数为绿色
-            const dailyChangeRateColor = item.daily_change_rate !== null && item.daily_change_rate < 0 ? "text-green-600" : "text-red-600"
+            // 累计收益颜色：A股惯例（红涨绿跌），调用统一工具函数
+            // 注意：原逻辑中 0 值显示为红色（与 getChangeColor 略有不同），保留对 0 的特殊处理
+            const changeRateColor = item.change_rate === 0
+              ? "text-red-600"
+              : getChangeColor(item.change_rate)
+
+            // 涨跌幅颜色
+            const dailyChangeRateColor = item.daily_change_rate === 0
+              ? "text-red-600"
+              : getChangeColor(item.daily_change_rate)
             
             // 稳健度颜色：>80分绿色，60-80分黄色，<60分红色
             const stabilityColor = 

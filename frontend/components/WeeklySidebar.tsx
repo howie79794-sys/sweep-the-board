@@ -1,11 +1,9 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { rankingAPI } from "@/lib/api"
 import { UserAvatar } from "@/components/UserAvatar"
-import { type WeeklyRankingItem } from "@/types"
-import { formatPercent } from "@/lib/utils"
-import { cn } from "@/lib/utils"
+import { Skeleton } from "@/components/ui/skeleton"
+import { useWeeklyRankings } from "@/lib/hooks"
+import { formatPercent, cn, getChangeColor, getChangeArrow } from "@/lib/utils"
 
 /** 周一至周四显示「本周领先」，周五至周日显示「本周荣誉之星」 */
 function getWeeklyTitle(): string {
@@ -23,25 +21,10 @@ interface WeeklySidebarProps {
 }
 
 export function WeeklySidebar({ className, selectedAssetCode, onSelectAssetCode }: WeeklySidebarProps) {
-  const [items, setItems] = useState<WeeklyRankingItem[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    const load = async () => {
-      try {
-        setLoading(true)
-        const res = await rankingAPI.getWeekly()
-        setItems(res.items || [])
-        setError(null)
-      } catch (err: any) {
-        setError(err.message || "加载失败")
-      } finally {
-        setLoading(false)
-      }
-    }
-    load()
-  }, [])
+  const { data, error: swrError, isLoading } = useWeeklyRankings()
+  const items = data?.items ?? []
+  const loading = isLoading && !data
+  const error = swrError ? (swrError.message || "加载失败") : null
 
   return (
     <aside
@@ -63,7 +46,17 @@ export function WeeklySidebar({ className, selectedAssetCode, onSelectAssetCode 
         </h3>
 
         {loading && (
-          <p className="text-sm text-muted-foreground">加载中...</p>
+          <div className="space-y-2" aria-label="加载中">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <Skeleton className="h-8 w-8 rounded-full" />
+                <div className="flex-1 space-y-1">
+                  <Skeleton className="h-3 w-3/4" />
+                  <Skeleton className="h-3 w-1/2" />
+                </div>
+              </div>
+            ))}
+          </div>
         )}
 
         {error && !loading && (
@@ -156,11 +149,12 @@ export function WeeklySidebar({ className, selectedAssetCode, onSelectAssetCode 
                         </span>
                         <span
                           className={cn(
-                            "text-sm font-semibold shrink-0",
-                            isPositive ? "text-red-600" : "text-green-600"
+                            "text-sm font-semibold shrink-0 inline-flex items-center gap-0.5",
+                            getChangeColor(item.change_rate)
                           )}
                         >
-                          {formatPercent(item.change_rate)}
+                          <span aria-hidden="true">{getChangeArrow(item.change_rate)}</span>
+                          <span>{formatPercent(item.change_rate)}</span>
                         </span>
                       </div>
                       <div className="text-xs text-muted-foreground truncate">

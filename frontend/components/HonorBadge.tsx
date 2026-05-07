@@ -2,8 +2,7 @@
 
 import { UserAvatar } from "@/components/UserAvatar"
 import { type User } from "@/types"
-import { formatPercent } from "@/lib/utils"
-import { cn } from "@/lib/utils"
+import { formatPercent, cn, getChangeColor, getChangeArrow } from "@/lib/utils"
 
 interface HonorBadgeProps {
   user: User
@@ -53,11 +52,12 @@ export function HonorBadge({
         <div className="text-right">
           <div
             className={cn(
-              "text-4xl font-bold mb-2",
-              changeRate >= 0 ? "text-green-600" : "text-red-600"
+              "text-4xl font-bold mb-2 inline-flex items-center gap-2",
+              getChangeColor(changeRate)
             )}
           >
-            {formatPercent(changeRate)}
+            <span aria-hidden="true">{getChangeArrow(changeRate)}</span>
+            <span>{formatPercent(changeRate)}</span>
           </div>
           <div className="text-sm text-muted-foreground">
             相对基准日涨幅

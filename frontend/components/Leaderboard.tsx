@@ -1,44 +1,39 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { rankingAPI } from "@/lib/api"
+import { useState } from "react"
 import { AssetCard } from "@/components/AssetCard"
 import { UserCard } from "@/components/UserCard"
-import { type RankingResponse } from "@/types"
-import { formatPercent } from "@/lib/utils"
-import { cn } from "@/lib/utils"
+import { MedalBadge } from "@/components/ui/medal-badge"
+import { CardListSkeleton } from "@/components/ui/skeleton"
+import { useRankings } from "@/lib/hooks"
+import {
+  formatPercent,
+  cn,
+  getChangeColor,
+  getChangeArrow,
+  getMedalConfig,
+} from "@/lib/utils"
 
 interface LeaderboardProps {
   className?: string
 }
 
 export function Leaderboard({ className }: LeaderboardProps) {
-  const [rankings, setRankings] = useState<RankingResponse | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const { data: rankings, error: swrError, isLoading, mutate } = useRankings()
+  const error = swrError ? (swrError.message || "加载排名失败") : null
   const [activeTab, setActiveTab] = useState<"assets" | "users">("assets")
+  const loadRankings = () => mutate()
 
-  useEffect(() => {
-    loadRankings()
-  }, [])
-
-  const loadRankings = async () => {
-    try {
-      setLoading(true)
-      const data = await rankingAPI.getAll()
-      setRankings(data)
-      setError(null)
-    } catch (err: any) {
-      setError(err.message || "加载排名失败")
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  if (loading) {
+  if (isLoading && !rankings) {
     return (
-      <div className={cn("text-center py-12", className)}>
-        <p className="text-muted-foreground">加载中...</p>
+      <div className={cn("space-y-6", className)}>
+        <div className="flex gap-4 border-b">
+          <div className="px-4 py-2 border-b-2 border-primary text-primary font-medium">
+            资产排名
+          </div>
+          <div className="px-4 py-2 text-muted-foreground">用户排名</div>
+        </div>
+        <CardListSkeleton count={6} />
       </div>
     )
   }
@@ -131,51 +126,44 @@ export function Leaderboard({ className }: LeaderboardProps) {
             </div>
           ) : (
             <div className="grid gap-4">
-              {rankings.user_rankings.map((ranking, index) => (
-                <div
-                  key={ranking.id}
-                  className={cn(
-                    "border rounded-lg p-4",
-                    index === 0
-                      ? "bg-gradient-to-r from-yellow-50 to-orange-50 border-yellow-300 shadow-lg"
-                      : "bg-card"
-                  )}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <div
-                        className={cn(
-                          "text-2xl font-bold",
-                          index === 0 ? "text-yellow-600" : "text-muted-foreground"
-                        )}
-                      >
-                        #{ranking.user_rank}
+              {rankings.user_rankings.map((ranking) => {
+                const medalConfig = getMedalConfig(ranking.user_rank)
+                const isMedal = medalConfig !== null
+                return (
+                  <div
+                    key={ranking.id}
+                    className={cn(
+                      "border rounded-lg p-4 transition-all",
+                      isMedal
+                        ? cn(medalConfig.bgClass, medalConfig.borderClass, "shadow-lg")
+                        : "bg-card hover:shadow-md"
+                    )}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <MedalBadge rank={ranking.user_rank} variant="full" size="md" />
+                        <UserCard user={ranking.user} showAvatar={true} />
                       </div>
-                      <UserCard
-                        user={ranking.user}
-                        showAvatar={true}
-                      />
-                    </div>
-                    <div className="text-right">
-                      <div
-                        className={cn(
-                          "text-2xl font-bold",
-                          ranking.change_rate && ranking.change_rate >= 0
-                            ? "text-green-600"
-                            : "text-red-600"
-                        )}
-                      >
-                        {formatPercent(ranking.change_rate)}
-                      </div>
-                      {index === 0 && (
-                        <div className="text-sm text-yellow-600 font-semibold mt-1">
-                          当日冠军 🏆
+                      <div className="text-right">
+                        <div
+                          className={cn(
+                            "text-2xl font-bold inline-flex items-center gap-1",
+                            getChangeColor(ranking.change_rate)
+                          )}
+                        >
+                          <span aria-hidden="true">{getChangeArrow(ranking.change_rate)}</span>
+                          <span>{formatPercent(ranking.change_rate)}</span>
                         </div>
-                      )}
+                        {isMedal && (
+                          <div className={cn("text-sm font-semibold mt-1", medalConfig.textClass)}>
+                            {medalConfig.emoji} {medalConfig.label}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>

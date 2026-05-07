@@ -1,12 +1,84 @@
-import type { Metadata } from "next"
+import type { Metadata, Viewport } from "next"
 import { Inter } from "next/font/google"
 import "./globals.css"
 
 const inter = Inter({ subsets: ["latin"] })
 
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://sweep-the-board.vercel.app"
+const siteTitle = "CoolDown 龙虎榜 · 金融资产年度涨幅 PK 平台"
+const siteDescription =
+  "CoolDown 龙虎榜：跟踪 A 股、基金、期货等多类金融资产的年度涨幅，多人 PK 比拼，实时排行榜与可视化图表。"
+
 export const metadata: Metadata = {
-  title: "CoolDown龙虎榜",
-  description: "金融资产排行榜",
+  metadataBase: new URL(siteUrl),
+  title: {
+    default: siteTitle,
+    template: "%s | CoolDown 龙虎榜",
+  },
+  description: siteDescription,
+  keywords: [
+    "龙虎榜",
+    "金融资产排行",
+    "股票涨幅",
+    "PK 比拼",
+    "投资比赛",
+    "A股",
+    "基金",
+    "期货",
+    "CoolDown",
+  ],
+  authors: [{ name: "howie79794-sys" }],
+  creator: "howie79794-sys",
+  alternates: {
+    canonical: "/",
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+    },
+  },
+  openGraph: {
+    type: "website",
+    locale: "zh_CN",
+    url: siteUrl,
+    siteName: "CoolDown 龙虎榜",
+    title: siteTitle,
+    description: siteDescription,
+    images: [
+      {
+        url: "/og-image.png",
+        width: 1200,
+        height: 630,
+        alt: "CoolDown 龙虎榜",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: siteTitle,
+    description: siteDescription,
+    images: ["/og-image.png"],
+  },
+  formatDetection: {
+    email: false,
+    address: false,
+    telephone: false,
+  },
+}
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: dark)", color: "#0a0a0a" },
+  ],
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
 }
 
 export default function RootLayout({

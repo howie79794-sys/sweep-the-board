@@ -1,8 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { formatPercent, formatNumber } from "@/lib/utils"
-import { cn } from "@/lib/utils"
+import { formatPercent, formatNumber, cn, getChangeColor } from "@/lib/utils"
 import { UserAvatar } from "@/components/UserAvatar"
 import { StabilityTooltip } from "@/components/StabilityTooltip"
 import { type PKPoolSnapshot } from "@/types"
@@ -165,10 +164,13 @@ export function AssetDetailTable({ data, className }: AssetDetailTableProps) {
         </thead>
         <tbody>
           {sortedData.map((item) => {
-            const changeRateColor =
-              item.change_rate !== null && item.change_rate < 0 ? "text-green-600" : "text-red-600"
-            const dailyChangeRateColor =
-              item.daily_change_rate !== null && item.daily_change_rate < 0 ? "text-green-600" : "text-red-600"
+            // A股惯例：红涨绿跌（0 视为红色，与原逻辑一致）
+            const changeRateColor = item.change_rate === 0
+              ? "text-red-600"
+              : getChangeColor(item.change_rate)
+            const dailyChangeRateColor = item.daily_change_rate === 0
+              ? "text-red-600"
+              : getChangeColor(item.daily_change_rate)
             const stabilityColor =
               item.stability_score !== null && item.stability_score > 80
                 ? "text-green-600"

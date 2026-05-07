@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react"
 import { userAPI, assetAPI, dataAPI } from "@/lib/api"
+import { invalidateAfterDataUpdate, invalidateUsersAndAssets } from "@/lib/hooks"
 import { type User, type Asset } from "@/types"
 import { UserAvatar } from "@/components/UserAvatar"
 import { CustomUpdateModal } from "@/components/CustomUpdateModal"
@@ -148,9 +149,11 @@ export default function AdminPage() {
             
             // 显示成功提示
             setToastMessage({ type: 'success', message })
-            
+
             // 自动刷新数据
             loadAssets()
+            // 让首页/榜单组件的 SWR 缓存全部过期重新拉取
+            void invalidateAfterDataUpdate()
             
             // 3秒后清除提示
             setTimeout(() => setToastMessage(null), 3000)
