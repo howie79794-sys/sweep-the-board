@@ -7,6 +7,29 @@ const config = {
     './components/**/*.{ts,tsx}',
     './app/**/*.{ts,tsx}',
     './src/**/*.{ts,tsx}',
+    './lib/**/*.{ts,tsx}',
+  ],
+  // 兜底 safelist：动态/工具函数返回的 class 必须显式列出
+  // （Tailwind JIT 静态扫描可能识别不到字符串模板里的 class）
+  safelist: [
+    // 涨跌热力色（getHeatmapColor）
+    "bg-red-100", "bg-red-300", "bg-red-500", "bg-red-600",
+    "bg-green-100", "bg-green-300", "bg-green-500", "bg-green-600",
+    "text-red-700", "text-red-900", "text-green-700", "text-green-900",
+    // 涨跌文字色（getChangeColor）
+    "text-red-600", "text-green-600",
+    // 奖牌徽章（getMedalConfig）
+    "ring-amber-400", "ring-slate-400", "ring-orange-400",
+    "ring-amber-300", "ring-slate-300", "ring-orange-300",
+    "border-amber-400", "border-slate-400", "border-orange-400",
+    "text-amber-700", "text-slate-700", "text-orange-700",
+    // 奖牌渐变背景（getMedalConfig）
+    "bg-gradient-to-br",
+    "from-yellow-50", "via-amber-50", "to-orange-100",
+    "from-slate-50", "via-zinc-50", "to-slate-100",
+    "from-orange-50", "to-yellow-100",
+    // bg-muted 兜底（中性色 / 0%）
+    "bg-muted", "text-muted-foreground",
   ],
   prefix: "",
   theme: {
