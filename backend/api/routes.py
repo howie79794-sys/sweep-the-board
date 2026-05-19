@@ -1421,12 +1421,16 @@ async def get_weekly_chart_data(db: Session = Depends(get_db)):
     """
     周收益曲线：强制所有资产从 0% 基准点对齐出发。
 
-    数据范围（重要）：
-        - 只返回 ≤ 今天 且 有实际行情数据 的日期。
-        - 未来日期（如今天周二，则不返回周三/周四/周五的点）不返回
-        - 历史非交易日 / 数据缺失日 也不返回（不再用 0.0 占位）
-        - 旧实现会用 0.0 占位未来或缺失日期，导致曲线在未来日期"突然回到 0%"
-          视觉上极具误导性。
+    数据范围与展示策略（重要）：
+        - X 轴始终保留 周一→周五 完整 5 天，便于看到整周框架
+        - 未来日期 / 历史缺数据 的点 ``change_rate = None``
+        - 前端（WeeklyReturnChart）配合 ``connectNulls={false}``，
+          曲线在最后一个有数据的点自然截断，不会跨过 null 也不会回 0%
+
+    设计回顾：
+        旧版（占位 0.0）：未来日期被画成 0%，造成"曲线突然掉回 0"
+        中间版（直接跳过）：X 轴失去未来日期，看不到整周框架
+        当前版（null + 不 connectNulls）：保留 X 轴 + 优雅截断
 
     基准点：序列最前插入一点，日期标记为「基准」，收益率 0.0。
     基准价：上周五收盘价；若获取不到（如 SH513010 等），用本周一收盘价兜底。
@@ -1436,15 +1440,20 @@ async def get_weekly_chart_data(db: Session = Depends(get_db)):
     baseline_date = get_weekly_baseline_date()
     today = get_beijing_date()
     current_monday = today - timedelta(days=today.weekday())
-    # 本周一至周五的候选日期
-    week_dates_all = [current_monday + timedelta(days=i) for i in range(5)]
-    # 只保留 ≤ 今天的日期（不含未来）
-    week_dates = [d for d in week_dates_all if d <= today]
+    # 周一到周五全 5 天，无条件保留作为 X 轴
+    week_dates = [current_monday + timedelta(days=i) for i in range(5)]
 
-    def _build_points(asset_id: int, baseline_price: float) -> list:
-        """根据基准价拼装数据点，跳过没行情的日期。"""
+    def _build_points(asset_id: int, baseline_price: Optional[float]) -> list:
+        """
+        拼装数据点：始终生成「基准 + 周一~周五」共 6 个槽位。
+        未来日期或缺数据的槽位 change_rate 设为 None，前端不连接。
+        """
         points = [{"date": "基准", "change_rate": 0.0}]
         for d in week_dates:
+            # 未来日期 / 没基准价 → 直接置 null
+            if d > today or baseline_price is None or baseline_price <= 0:
+                points.append({"date": d.isoformat(), "change_rate": None})
+                continue
             md = db.query(MarketData).filter(
                 MarketData.asset_id == asset_id,
                 MarketData.date == d
@@ -1452,7 +1461,9 @@ async def get_weekly_chart_data(db: Session = Depends(get_db)):
             if md and md.close_price is not None:
                 change_rate = ((md.close_price - baseline_price) / baseline_price) * 100
                 points.append({"date": d.isoformat(), "change_rate": round(change_rate, 4)})
-            # md 不存在 → 不补 0.0 占位，直接跳过
+            else:
+                # 历史日期但没数据 → null（让前端在此截断）
+                points.append({"date": d.isoformat(), "change_rate": None})
         return points
 
     assets = db.query(Asset).join(User).filter(User.is_active == True, Asset.is_core == True).all()
@@ -1473,11 +1484,8 @@ async def get_weekly_chart_data(db: Session = Depends(get_db)):
             ).first()
             baseline_price = monday_data.close_price if monday_data else None
 
-        # 最终兜底：完全拿不到基准价，仅返回一个基准点（不再编造 5 天 0%）
-        if baseline_price is None or baseline_price <= 0:
-            data_points = [{"date": "基准", "change_rate": 0.0}]
-        else:
-            data_points = _build_points(asset.id, baseline_price)
+        # 拿不到基准价也保留 5 个 null 占位，X 轴依然完整
+        data_points = _build_points(asset.id, baseline_price)
 
         result.append({
             "asset_id": asset.id,

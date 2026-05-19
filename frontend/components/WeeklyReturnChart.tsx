@@ -247,7 +247,9 @@ export function WeeklyReturnChart({
                   strokeWidth={strokeWidth}
                   strokeOpacity={opacity}
                   dot={{ r: 3 }}
-                  connectNulls
+                  // 不 connectNulls：未来日期/缺数据的点保持断开
+                  // 让曲线在最后一个有数据的点优雅截断
+                  connectNulls={false}
                 />
               )
             })}
