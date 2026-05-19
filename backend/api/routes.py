@@ -1420,59 +1420,64 @@ async def get_all_assets_chart_data(
 async def get_weekly_chart_data(db: Session = Depends(get_db)):
     """
     周收益曲线：强制所有资产从 0% 基准点对齐出发。
+
+    数据范围（重要）：
+        - 只返回 ≤ 今天 且 有实际行情数据 的日期。
+        - 未来日期（如今天周二，则不返回周三/周四/周五的点）不返回
+        - 历史非交易日 / 数据缺失日 也不返回（不再用 0.0 占位）
+        - 旧实现会用 0.0 占位未来或缺失日期，导致曲线在未来日期"突然回到 0%"
+          视觉上极具误导性。
+
     基准点：序列最前插入一点，日期标记为「基准」，收益率 0.0。
-    基准价：上周五收盘价；若获取不到（如 SH513010 等），用本周一收盘价兜底，严禁起始点非 0。
-    后续点：从第二个点起，(当日收盘 - 基准价) / 基准价 * 100。
+    基准价：上周五收盘价；若获取不到（如 SH513010 等），用本周一收盘价兜底。
+    后续点：(当日收盘 - 基准价) / 基准价 * 100。
     本接口无缓存，每次请求实时计算。
     """
     baseline_date = get_weekly_baseline_date()
     today = get_beijing_date()
     current_monday = today - timedelta(days=today.weekday())
-    week_dates = [current_monday + timedelta(days=i) for i in range(5)]
+    # 本周一至周五的候选日期
+    week_dates_all = [current_monday + timedelta(days=i) for i in range(5)]
+    # 只保留 ≤ 今天的日期（不含未来）
+    week_dates = [d for d in week_dates_all if d <= today]
+
+    def _build_points(asset_id: int, baseline_price: float) -> list:
+        """根据基准价拼装数据点，跳过没行情的日期。"""
+        points = [{"date": "基准", "change_rate": 0.0}]
+        for d in week_dates:
+            md = db.query(MarketData).filter(
+                MarketData.asset_id == asset_id,
+                MarketData.date == d
+            ).first()
+            if md and md.close_price is not None:
+                change_rate = ((md.close_price - baseline_price) / baseline_price) * 100
+                points.append({"date": d.isoformat(), "change_rate": round(change_rate, 4)})
+            # md 不存在 → 不补 0.0 占位，直接跳过
+        return points
 
     assets = db.query(Asset).join(User).filter(User.is_active == True, Asset.is_core == True).all()
     result = []
     for asset in assets:
+        # 主路径：上周五收盘价作基准
         baseline_data = db.query(MarketData).filter(
             MarketData.asset_id == asset.id,
             MarketData.date <= baseline_date
         ).order_by(MarketData.date.desc()).first()
         baseline_price = baseline_data.close_price if baseline_data else None
 
+        # 兜底路径：本周一收盘价
         if baseline_price is None or baseline_price <= 0:
             monday_data = db.query(MarketData).filter(
                 MarketData.asset_id == asset.id,
                 MarketData.date == current_monday
             ).first()
             baseline_price = monday_data.close_price if monday_data else None
-            if baseline_price is None or baseline_price <= 0:
-                data_points = [{"date": "基准", "change_rate": 0.0}] + [
-                    {"date": d.isoformat(), "change_rate": 0.0} for d in week_dates
-                ]
-            else:
-                data_points = [{"date": "基准", "change_rate": 0.0}]
-                for d in week_dates:
-                    md = db.query(MarketData).filter(
-                        MarketData.asset_id == asset.id,
-                        MarketData.date == d
-                    ).first()
-                    if md:
-                        change_rate = ((md.close_price - baseline_price) / baseline_price) * 100
-                        data_points.append({"date": d.isoformat(), "change_rate": round(change_rate, 4)})
-                    else:
-                        data_points.append({"date": d.isoformat(), "change_rate": 0.0})
-        else:
+
+        # 最终兜底：完全拿不到基准价，仅返回一个基准点（不再编造 5 天 0%）
+        if baseline_price is None or baseline_price <= 0:
             data_points = [{"date": "基准", "change_rate": 0.0}]
-            for d in week_dates:
-                md = db.query(MarketData).filter(
-                    MarketData.asset_id == asset.id,
-                    MarketData.date == d
-                ).first()
-                if md:
-                    change_rate = ((md.close_price - baseline_price) / baseline_price) * 100
-                    data_points.append({"date": d.isoformat(), "change_rate": round(change_rate, 4)})
-                else:
-                    data_points.append({"date": d.isoformat(), "change_rate": 0.0})
+        else:
+            data_points = _build_points(asset.id, baseline_price)
 
         result.append({
             "asset_id": asset.id,
