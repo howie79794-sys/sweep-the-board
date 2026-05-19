@@ -155,48 +155,77 @@ def calculate_asset_rankings(target_date: date, db: Session) -> List[Dict]:
 
 
 def calculate_user_rankings(target_date: date, db: Session) -> List[Dict]:
-    """计算用户排名（基于最佳资产涨跌幅，即使缺少基准价也包含用户）"""
+    """
+    计算用户排名
+
+    规则（重要）：
+        用户的代表涨跌幅 = 该用户「核心资产」(is_core=True) 的累计涨跌幅。
+        这与首页"核心资产龙虎榜"、"核心资产明细表"、"自然周榜单"完全一致。
+
+    历史 bug：
+        旧逻辑取 "该用户所有资产中涨跌幅最高的那个"。当用户拥有多个非核心资产时，
+        会导致龙虎榜显示的 change_rate 与明细表不一致（用户 ID=1 吴斯克为典型案例：
+        龙虎榜显示 60% 但明细表显示 24%）。
+
+    降级策略：
+        如果用户没有标记 is_core 的资产，回退到「涨跌幅最高的资产」，保证用户
+        仍可入榜（避免显示 "暂无数据"）。
+    """
     # 获取所有活跃用户
     users = db.query(User).filter(User.is_active == True).all()
-    
+
     user_best_rates = []
     users_without_rate = []
-    
+
     for user in users:
         # 获取用户的所有资产
         assets = db.query(Asset).filter(Asset.user_id == user.id).all()
-        
+
+        # 主路径：仅核心资产
+        core_change_rate = None
+        core_asset_id = None
+        # 降级路径：最强资产（仅当无核心资产时使用）
         best_change_rate = None
         best_asset_id = None
         has_any_rate = False
-        
+
         for asset in assets:
             # 获取目标日期的市场数据（使用最新数据作为兜底）
             market_data = db.query(MarketData).filter(
                 MarketData.asset_id == asset.id,
                 MarketData.date <= target_date
             ).order_by(MarketData.date.desc()).first()
-            
+
             if not market_data:
                 continue
-            
+
             baseline_price = get_or_set_baseline_price(asset, db)
             if baseline_price is None or baseline_price == 0:
                 continue
-            
+
             change_rate = calculate_change_rate(market_data.close_price, baseline_price)
             has_any_rate = True
-            
+
+            # 核心资产：直接锁定（一人一心，理论上只有一个）
+            if asset.is_core:
+                core_change_rate = change_rate
+                core_asset_id = asset.id
+
+            # 同时跟踪"最强资产"作为降级
             if best_change_rate is None or change_rate > best_change_rate:
                 best_change_rate = change_rate
                 best_asset_id = asset.id
-        
-        if best_change_rate is not None:
+
+        # 优先用核心资产；没有核心则用最强
+        selected_change_rate = core_change_rate if core_change_rate is not None else best_change_rate
+        selected_asset_id = core_asset_id if core_asset_id is not None else best_asset_id
+
+        if selected_change_rate is not None:
             user_best_rates.append({
                 "user_id": user.id,
-                "change_rate": best_change_rate,
-                "best_asset_id": best_asset_id,
-                "user": user
+                "change_rate": selected_change_rate,
+                "best_asset_id": selected_asset_id,
+                "user": user,
             })
         elif not has_any_rate:
             # 用户没有任何可计算的涨跌幅

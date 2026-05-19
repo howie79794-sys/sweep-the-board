@@ -1672,6 +1672,16 @@ async def get_rankings(
             user_rankings.append(ranking)
             seen_users.add(ranking.user_id)
     
+    # 防御性：实时根据「资产基准价 + 当前价」重算 change_rate，
+    # 不再相信 rankings 表里存的快照值。
+    # 历史 bug：用户排名 change_rate 曾被错误地存为"用户最强资产涨幅"，
+    # 导致龙虎榜与明细表不一致（用户 ID=1 吴斯克为典型案例）。
+    def _live_change_rate(asset_obj, current_price_val):
+        baseline = asset_obj.baseline_price if asset_obj else None
+        if baseline is None or baseline == 0 or current_price_val is None:
+            return None
+        return ((current_price_val - baseline) / baseline) * 100
+
     # 加载关联数据，并获取当前价格
     asset_results = []
     for ranking in asset_rankings:
@@ -1679,9 +1689,13 @@ async def get_rankings(
         latest_market_data = db.query(MarketData).filter(
             MarketData.asset_id == ranking.asset_id
         ).order_by(MarketData.date.desc()).first()
-        
+
         current_price = latest_market_data.close_price if latest_market_data else None
-        
+        # 实时重算 change_rate（防止 rankings 表里存了错误快照）
+        change_rate_live = _live_change_rate(ranking.asset, current_price)
+        if change_rate_live is None:
+            change_rate_live = ranking.change_rate  # 兜底：仍用旧值（如缺基准价）
+
         asset_results.append({
             "id": ranking.id,
             "date": ranking.date.isoformat(),
@@ -1689,7 +1703,7 @@ async def get_rankings(
             "user_id": ranking.user_id,
             "asset_rank": ranking.asset_rank,
             "user_rank": ranking.user_rank,
-            "change_rate": ranking.change_rate,
+            "change_rate": change_rate_live,
             "current_price": current_price,
             "rank_type": ranking.rank_type,
             "created_at": ranking.created_at.isoformat() if ranking.created_at else None,
@@ -1721,9 +1735,13 @@ async def get_rankings(
         latest_market_data = db.query(MarketData).filter(
             MarketData.asset_id == ranking.asset_id
         ).order_by(MarketData.date.desc()).first()
-        
+
         current_price = latest_market_data.close_price if latest_market_data else None
-        
+        # 实时重算 change_rate（防止 rankings 表里存了错误快照）
+        change_rate_live = _live_change_rate(ranking.asset, current_price)
+        if change_rate_live is None:
+            change_rate_live = ranking.change_rate  # 兜底
+
         user_results.append({
             "id": ranking.id,
             "date": ranking.date.isoformat(),
@@ -1731,7 +1749,7 @@ async def get_rankings(
             "user_id": ranking.user_id,
             "asset_rank": ranking.asset_rank,
             "user_rank": ranking.user_rank,
-            "change_rate": ranking.change_rate,
+            "change_rate": change_rate_live,
             "current_price": current_price,
             "rank_type": ranking.rank_type,
             "created_at": ranking.created_at.isoformat() if ranking.created_at else None,
@@ -1757,6 +1775,24 @@ async def get_rankings(
             }
         })
     
+    # ----------------------------------------------------------
+    # 实时重排（防御性）
+    # ----------------------------------------------------------
+    # 既然上面已经按 baseline+current 实时重算了 change_rate，那么
+    # 数据库里预存的 asset_rank / user_rank 顺序也可能不准（同 bug
+    # 来源）。这里按重算后的 change_rate 重新排序、重新分配名次。
+    def _resort_and_reassign_rank(results, rank_field: str):
+        # 把有 change_rate 的放前面，按降序排；None 放最后保持原相对顺序
+        with_rate = [r for r in results if r.get("change_rate") is not None]
+        without_rate = [r for r in results if r.get("change_rate") is None]
+        with_rate.sort(key=lambda r: r["change_rate"], reverse=True)
+        for idx, r in enumerate(with_rate, start=1):
+            r[rank_field] = idx
+        return with_rate + without_rate
+
+    asset_results = _resort_and_reassign_rank(asset_results, "asset_rank")
+    user_results = _resort_and_reassign_rank(user_results, "user_rank")
+
     return {
         "asset_rankings": asset_results,
         "user_rankings": user_results,
