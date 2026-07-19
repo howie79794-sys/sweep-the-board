@@ -7,6 +7,7 @@ from sqlalchemy import func
 from typing import List, Optional
 from pathlib import Path
 from datetime import date, datetime, timedelta
+import os
 import uuid
 import json
 import traceback
@@ -1206,6 +1207,22 @@ async def trigger_update(
     task_id = create_task()
     print(f"[API] 创建任务: {task_id}")
     
+    # Vercel 函数是无状态的：后台任务状态不能依赖当前实例内存，否则下一次
+    # 轮询可能落到另一个实例并返回“任务不存在”。Vercel 环境改为同一次
+    # 调用内完成并直接返回结果；常规容器部署继续保留原异步轮询行为。
+    if os.getenv("VERCEL"):
+        run_update_task(task_id, asset_ids, force)
+        task = tasks[task_id]
+        return {
+            "task_id": task_id,
+            "message": task["result"].get("message", "数据更新完成")
+            if task["result"]
+            else task["error_msg"] or "数据更新失败",
+            "status": task["status"],
+            "result": task["result"],
+            "error_msg": task["error_msg"],
+        }
+
     # 启动后台任务（不传递 db，在任务内部创建）
     background_tasks.add_task(run_update_task, task_id, asset_ids, force)
     

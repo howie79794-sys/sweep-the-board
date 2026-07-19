@@ -29,18 +29,17 @@
                                     │ HTTPS
                                     ▼
             ┌──────────────────────────────────────┐
-            │  Vercel（前端 / Next.js 14）         │
-            │  https://sweep-the-board.vercel.app  │
-            │  - Edge CDN 全球分发                  │
+            │  Vercel                              │
+            │  - Next.js 14 前端 + Edge CDN         │
+            │  - FastAPI Python Function            │
             │  - SWR 客户端缓存                     │
             └───────────────┬──────────────────────┘
-                            │ /api/* 代理转发
+                            │
                             ▼
    ┌─────────────────────────────────────────────────┐
-   │  Railway（后端 / FastAPI + Python 3.11）        │
-   │  https://sweep-the-board-production.up.railway.app │
-   │  - APScheduler 定时任务                          │
-   │  - tenacity 行情拉取重试                         │
+   │  GitHub Actions（定时任务）                      │
+   │  - 工作日 16:00 / 22:30 更新行情                │
+   │  - 无需常驻容器                                  │
    └────┬──────────────────────┬─────────────────────┘
         │                      │
         ▼                      ▼
@@ -56,8 +55,8 @@
 
 | 平台 | 角色 | 关键配置 |
 |------|------|---------|
-| **Vercel** | 前端托管 + CDN | Root Directory: `frontend`<br>`NEXT_PUBLIC_API_URL` → Railway 域名 |
-| **Railway** | Python 后端 | Root Directory: `backend`<br>Start Command: `uvicorn main:app --host 0.0.0.0 --port $PORT`<br>Python 版本由 `backend/.python-version` 固定为 3.11 |
+| **Vercel** | 前端 + FastAPI 后端 | 前端 Root Directory: `frontend`<br>后端 Root Directory: `backend` |
+| **GitHub Actions** | 定时行情更新 | `.github/workflows/market-data-update.yml`，不运行常驻容器 |
 | **Supabase** | 数据库 + 文件存储 | PostgreSQL 6 张表 + `avatars` storage bucket |
 
 ---
@@ -121,8 +120,11 @@ sweep-the-board/
 ├── backend/                           # FastAPI 后端
 │   ├── main.py                        # 应用入口（含 lifespan、CORS、日志）
 │   ├── config.py                      # 应用配置
-│   ├── .python-version                # Railway 用此固定 Python 3.11
+│   ├── .python-version                # Vercel Python 运行时版本
+│   ├── vercel.json                    # Vercel Function 配置
 │   ├── requirements.txt
+│   ├── app/main.py                    # Vercel FastAPI 入口
+│   ├── scripts/update_scheduled.py    # GitHub Actions 单次更新入口
 │   ├── api/
 │   │   └── routes.py                  # API 路由（users / assets / data / ranking / pk-pools）
 │   ├── database/
@@ -156,35 +158,28 @@ sweep-the-board/
 
 1. **GitHub 仓库**：已托管在 <https://github.com/howie79794-sys/sweep-the-board>
 2. **Supabase 项目**：创建 PostgreSQL 数据库 + 名为 `avatars` 的 storage bucket
-3. **Vercel 账号**：用于前端部署
-4. **Railway 账号**：用于后端部署
+3. **Vercel 账号**：用于前端与后端部署
+4. **GitHub Actions**：用于工作日定时更新行情
 
-### Step 1: Railway 后端部署
+### Step 1: Vercel 后端部署
 
-1. Railway 控制台 → **New Project → Deploy from GitHub repo** → 选择本仓库
-2. 进入 Service → **Settings**：
-   - **Source** 区块：
-     - **Root Directory**：`backend`（不带前导斜杠）
-   - **Deploy** 区块：
-     - **Start Command**：`uvicorn main:app --host 0.0.0.0 --port $PORT`
-   - **Networking** 区块：点 **Generate Domain** 获取公开域名
-3. 进入 Service → **Variables**，添加：
+1. Vercel 控制台 → **Add New Project → Import Git Repository** → 选择本仓库
+2. 将 **Root Directory** 设为 `backend`，Framework Preset 设为 **FastAPI**
+3. 在 **Production Environment Variables** 添加：
 
    | 变量名 | 值 |
    |--------|-----|
    | `SUPABASE_URL` | `https://<project-ref>.supabase.co` |
    | `SUPABASE_SERVICE_ROLE_KEY` | Supabase → Project Settings → API → service_role key |
    | `DATABASE_URL` | `postgresql://postgres.<project-ref>:<密码>@aws-0-<region>.pooler.supabase.com:6543/postgres?sslmode=require` |
-   | `SCHEDULER_ENABLED` | `true`（启用定时数据更新） |
-   | `LOG_LEVEL` | `INFO` |
+   | `LOG_LEVEL` | `INFO`（可选） |
 
    > ⚠️ **DATABASE_URL 关键点**：
-   > - 必须用 **Transaction Pooler** 地址（端口 `6543`），而非直连地址
-   >   ：Railway 免费套餐不支持 IPv6，直连地址会解析为 IPv6 失败
+   > - 推荐使用 **Transaction Pooler** 地址（端口 `6543`），避免无服务器实例占满数据库连接
    > - 用户名格式必须是 `postgres.<project-ref>`（Pooler 多租户识别要求）
    > - 末尾必须带 `?sslmode=require`
 
-4. Railway 会自动重新部署。访问 `https://<your-railway-domain>/api/health`，看到 `{"status":"ok"}` 即成功。
+4. 部署后访问 `https://<your-api-domain>/api/health`，看到 `{"status":"ok"}` 即成功。
 
 ### Step 2: Vercel 前端部署
 
@@ -196,12 +191,18 @@ sweep-the-board/
 
    | 变量名 | 值 |
    |--------|-----|
-   | `NEXT_PUBLIC_API_URL` | Step 1 拿到的 Railway 域名，如 `https://xxxx.up.railway.app` |
+   | `NEXT_PUBLIC_API_URL` | Step 1 拿到的 Vercel 后端域名 |
    | `NEXT_PUBLIC_SITE_URL` | Vercel 给的前端域名（用于 SEO sitemap，可选） |
 
 4. 点 **Deploy**。完成后访问 Vercel 域名验证。
 
-### Step 3: Supabase 性能索引（一次性操作）
+### Step 3: GitHub Actions 定时任务
+
+在仓库 **Settings → Secrets and variables → Actions** 中添加
+`DATABASE_URL`、`SUPABASE_URL`、`SUPABASE_SERVICE_ROLE_KEY`。
+工作流会在工作日北京时间 16:00 和 22:30 运行，也可从 Actions 页面手动触发。
+
+### Step 4: Supabase 性能索引（一次性操作）
 
 新部署后，需要在 Supabase 加一次性能索引：
 
@@ -211,11 +212,11 @@ sweep-the-board/
 
 文件中所有语句都是 `CREATE INDEX IF NOT EXISTS`，可重复执行、不会锁表、不会破坏数据。
 
-### Step 4: 验证
+### Step 5: 验证
 
 ```bash
 # 后端在线
-curl https://<your-railway-domain>/api/health
+curl https://<your-api-domain>/api/health
 
 # 前后端链路通
 curl https://<your-vercel-domain>/api/users
@@ -223,7 +224,7 @@ curl https://<your-vercel-domain>/api/users
 
 ### 自动部署
 
-两个平台都已经连接 GitHub，**push 到 `main` 分支会自动重新构建+部署**，无需手动操作。
+Vercel 项目连接 GitHub 后，**push 到 `main` 分支会自动重新构建+部署**；定时行情更新由 GitHub Actions 独立运行。
 
 ---
 
@@ -231,7 +232,7 @@ curl https://<your-vercel-domain>/api/users
 
 ### 环境要求
 
-- Python 3.11+（重要：3.13 与当前 SQLAlchemy 不兼容）
+- Python 3.12
 - Node.js 20+
 - 一个 Supabase 项目（直接复用线上的即可）
 
@@ -296,17 +297,17 @@ npm run dev
 
 ## 🔧 环境变量速查
 
-### 后端（Railway / 本地）
+### 后端（Vercel / 本地）
 
 | 变量 | 必填 | 默认值 | 说明 |
 |------|------|--------|------|
 | `DATABASE_URL` | ✅ | - | PostgreSQL 连接串（必须 Pooler + SSL） |
 | `SUPABASE_URL` | ✅ | - | Supabase 项目 URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | ✅ | - | Supabase service_role 密钥（用于头像上传） |
-| `SCHEDULER_ENABLED` | ❌ | `false` | 设 `true` 启用定时数据更新 |
+| `SCHEDULER_ENABLED` | ❌ | `false` | 仅用于常驻容器；Vercel 会忽略该开关 |
 | `LOG_LEVEL` | ❌ | `INFO` | 日志级别（DEBUG/INFO/WARNING/ERROR） |
 | `API_HOST` | ❌ | `0.0.0.0` | 监听地址 |
-| `API_PORT` | ❌ | `8000` | 监听端口（Railway 用 `$PORT`） |
+| `API_PORT` | ❌ | `8000` | 本地监听端口 |
 | `CORS_ORIGINS` | ❌ | `*` | 允许的来源（逗号分隔） |
 
 ### 前端（Vercel / 本地）
@@ -341,7 +342,7 @@ npm run dev
 
 ## 📡 API 速查
 
-后端 base URL：`https://sweep-the-board-production.up.railway.app`
+后端 base URL：Vercel `sweep-the-board-api` 项目的生产域名
 前端代理路径：`https://sweep-the-board.vercel.app/api/...`
 
 | 路径 | 方法 | 用途 |
@@ -353,8 +354,8 @@ npm run dev
 | `/api/assets` | GET / POST | 资产列表 / 创建资产 |
 | `/api/assets/{id}` | GET / PUT / DELETE | 资产 CRUD |
 | `/api/data/snapshot` | GET | 资产快照（含涨跌幅、稳健度） |
-| `/api/data/update` | POST | 手动触发数据更新（返回 task_id） |
-| `/api/data/task/{task_id}` | GET | 查询更新任务状态 |
+| `/api/data/update` | POST | 手动触发数据更新（Vercel 同步返回结果） |
+| `/api/data/task/{task_id}` | GET | 常驻容器模式查询更新任务状态 |
 | `/api/data/charts/all` | GET | 所有资产收益曲线 |
 | `/api/data/charts/weekly` | GET | 周度图表 |
 | `/api/data/assets/{id}` | GET | 单个资产历史行情 |
@@ -364,7 +365,7 @@ npm run dev
 | `/api/pk-pools` | GET / POST | PK 池列表 / 创建 |
 | `/api/pk-pools/{id}/detail` | GET | PK 池详情（含图表） |
 
-完整 API 文档：<https://sweep-the-board-production.up.railway.app/docs>
+完整 API 文档：`https://<your-api-domain>/docs`
 
 ---
 
@@ -385,15 +386,15 @@ npm run dev
 
 ### 定时任务
 
-`services/scheduler.py` 用 APScheduler 在 FastAPI lifespan 中挂载：
+生产环境由 `.github/workflows/market-data-update.yml` 运行
+`scripts/update_scheduled.py`：
 
 | 任务 | Cron | 用途 |
 |------|------|------|
 | 行情主更新 | 工作日 16:00（Asia/Shanghai） | A 股收盘后拉取所有资产 |
 | 行情兜底更新 | 工作日 22:30 | 美股开盘前补漏 |
-| 心跳健康自检 | 每天 03:00 | 日志确认 scheduler 还活着 |
-
-通过环境变量 `SCHEDULER_ENABLED=true` 启用（本地默认关闭，避免频繁打外部 API）。
+Vercel Function 不运行常驻调度器。本地或其他常驻容器仍可通过
+`SCHEDULER_ENABLED=true` 启用 `services/scheduler.py`。
 
 ### 前端 SWR 缓存
 
@@ -417,18 +418,25 @@ npm run dev
 
 ## 🐛 已知问题与排坑记录
 
-迁移到 Vercel + Railway 过程中遇到的坑（避免后来人踩同样的坑）：
+迁移到 Vercel 无服务器架构过程中遇到的坑（避免后来人踩同样的坑）：
 
 | 现象 | 根因 | 解决方案 |
 |------|------|---------|
-| Railway 启动崩溃 `TypeError: __firstlineno__` | Python 3.13 默认 + SQLAlchemy 2.0.30 不兼容 | 加 `backend/.python-version` 内容 `3.11` |
-| 数据库连接 `Network is unreachable (IPv6)` | Railway 免费套餐不支持 IPv6，Supabase 直连解析为 IPv6 | 改用 Transaction Pooler 域名（IPv4） |
+| 无服务器实例间查不到内存 task_id | 实例不共享进程内状态 | Vercel 上同步执行手动更新并直接返回结果 |
+| 数据库连接数增长 | 每个无服务器实例各自创建连接池 | Vercel 使用 SQLAlchemy `NullPool` |
 | `FATAL: no tenant identifier provided` | Pooler 需要多租户标识 | 用户名改为 `postgres.<project-ref>` |
 | 涨跌色徽章不显示 / 颜色错乱 | Tailwind 默认 `content` 不扫 `lib/` 目录 | 在 `tailwind.config.ts` 加 `./lib/**/*.{ts,tsx}` + safelist |
 
 ---
 
 ## 📝 版本历史
+
+### v1.2.0（2026-07）— 公益零常驻成本架构
+
+- 🚀 FastAPI 从 Railway 常驻容器迁移到 Vercel Python Functions
+- ⏰ 定时行情更新迁移到 GitHub Actions
+- 🧩 Vercel 环境使用无状态任务返回、`/tmp` 临时目录与数据库 `NullPool`
+- 🗑️ 移除已废弃的 Hugging Face 自动部署工作流
 
 ### v1.1.0（2026-05）— 部署架构迁移 + 性能优化
 

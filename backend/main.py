@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from config import CORS_ORIGINS, UPLOAD_DIR
+from config import CORS_ORIGINS, IS_VERCEL, UPLOAD_DIR
 from api.routes import router
 from services.scheduler import init_scheduler, shutdown_scheduler
 
@@ -21,7 +21,7 @@ from services.scheduler import init_scheduler, shutdown_scheduler
 # ============================================================
 # 日志配置
 # ============================================================
-# 统一用 logging 而非 print，方便 Railway 日志查看器分级、检索
+# 统一用 logging 而非 print，方便托管平台按级别检索运行日志
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
     level=LOG_LEVEL,
@@ -37,13 +37,17 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """应用生命周期：启动时挂载调度器，关闭时优雅停止。"""
-    logger.info("应用启动：初始化调度器")
-    init_scheduler()  # 内部根据 SCHEDULER_ENABLED 决定是否真启
+    if IS_VERCEL:
+        logger.info("应用启动：Vercel 无状态运行模式，跳过进程内调度器")
+    else:
+        logger.info("应用启动：初始化调度器")
+        init_scheduler()  # 内部根据 SCHEDULER_ENABLED 决定是否真启
     try:
         yield
     finally:
-        logger.info("应用关闭：停止调度器")
-        shutdown_scheduler()
+        if not IS_VERCEL:
+            logger.info("应用关闭：停止调度器")
+            shutdown_scheduler()
 
 
 # 创建FastAPI应用
@@ -82,8 +86,10 @@ async def global_exception_handler(request: Request, exc: Exception):
         },
     )
 
-# 挂载静态文件（头像）
-app.mount("/avatars", StaticFiles(directory=str(UPLOAD_DIR)), name="avatars")
+# Vercel 官方建议不要用 app.mount 提供静态文件；线上头像由 Supabase
+# Storage 直接提供。本地和传统容器部署仍保留旧路径兼容。
+if not IS_VERCEL:
+    app.mount("/avatars", StaticFiles(directory=str(UPLOAD_DIR)), name="avatars")
 
 # 注册路由
 app.include_router(router, prefix="/api")

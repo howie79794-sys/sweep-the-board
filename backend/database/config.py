@@ -6,6 +6,7 @@ import os
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
 from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
 
 # 数据库连接字符串（从环境变量读取，必须配置）
@@ -63,18 +64,30 @@ def _init_engine():
     global _engine
     if _engine is None:
         configured_url = _get_configured_url()
-        _engine = create_engine(
-            configured_url,
-            echo=False,
-            pool_size=10,  # 连接池大小（增加以应对并发）
-            max_overflow=20,  # 最大溢出连接数（增加以应对峰值）
-            pool_pre_ping=True,  # 连接前检查连接是否有效（防止 stale 连接）
-            pool_recycle=1800,  # 连接回收时间（秒，30分钟，防止连接超时）
-            connect_args={
-                "connect_timeout": 10,  # 连接超时（秒）
-                "options": "-c statement_timeout=30000"  # 查询超时（30秒，毫秒单位）
-            }
-        )
+        common_options = {
+            "echo": False,
+            "pool_pre_ping": True,
+            "connect_args": {
+                "connect_timeout": 10,
+                "options": "-c statement_timeout=30000",
+            },
+        }
+        if os.getenv("VERCEL"):
+            # Serverless 实例可能随时挂起。每个实例保留 30 个连接会迅速耗尽
+            # Supabase Pooler，NullPool 让每次请求结束后立即释放连接。
+            _engine = create_engine(
+                configured_url,
+                poolclass=NullPool,
+                **common_options,
+            )
+        else:
+            _engine = create_engine(
+                configured_url,
+                pool_size=10,
+                max_overflow=20,
+                pool_recycle=1800,
+                **common_options,
+            )
     return _engine
 
 
