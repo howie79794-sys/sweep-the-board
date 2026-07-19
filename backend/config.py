@@ -4,6 +4,7 @@ from pathlib import Path
 
 # 项目根目录
 BASE_DIR = Path(__file__).parent.parent
+IS_VERCEL = bool(os.getenv("VERCEL"))
 
 # 数据库配置（从环境变量读取，必须配置）
 # 注意：DATABASE_URL 在 database/base.py 中处理，这里不再重复定义
@@ -13,7 +14,9 @@ API_HOST = os.getenv("API_HOST", "0.0.0.0")
 API_PORT = int(os.getenv("API_PORT", "8000"))
 
 # 文件上传配置
-UPLOAD_DIR = BASE_DIR / "data" / "avatars"
+# Vercel 函数的代码目录是只读的，仅 /tmp 可写。头像已迁移到 Supabase
+# Storage，这个目录只为兼容旧的本地头像路径。
+UPLOAD_DIR = Path("/tmp/avatars") if IS_VERCEL else BASE_DIR / "data" / "avatars"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 MAX_UPLOAD_SIZE = 5 * 1024 * 1024  # 5MB
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}

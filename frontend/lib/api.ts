@@ -229,7 +229,13 @@ export const dataAPI = {
     console.log('[API] Sending data:', bodyString)
     console.log('[API] 发送数据更新请求 (对象):', requestBody)
     
-    return fetchAPI<{ task_id: string; message: string; status: string }>('/api/data/update', {
+    return fetchAPI<{
+      task_id: string;
+      message: string;
+      status: 'processing' | 'success' | 'failed';
+      result?: any;
+      error_msg?: string | null;
+    }>('/api/data/update', {
       method: 'POST',
       body: bodyString,
     })

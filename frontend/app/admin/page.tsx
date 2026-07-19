@@ -91,6 +91,29 @@ export default function AdminPage() {
     }
   }
 
+  const finishDataUpdate = (result: any) => {
+    setUpdating(false)
+    setUpdateProgress(null)
+
+    let message = result?.message || "数据更新完成"
+    if (result?.total !== undefined) {
+      message += `\n总计: ${result.total}，成功: ${result.success}，失败: ${result.failed}`
+      if (result.details && result.details.length > 0) {
+        const failedDetails = result.details
+          .filter((d: any) => !d.result?.success)
+          .map((d: any) => `${d.asset_name}: ${d.result?.message || "失败"}`)
+        if (failedDetails.length > 0) {
+          message += `\n\n失败详情:\n${failedDetails.join('\n')}`
+        }
+      }
+    }
+
+    setToastMessage({ type: 'success', message })
+    loadAssets()
+    void invalidateAfterDataUpdate()
+    setTimeout(() => setToastMessage(null), 3000)
+  }
+
   const handleUpdateData = async () => {
     try {
       setUpdating(true)
@@ -100,6 +123,15 @@ export default function AdminPage() {
       // 启动更新任务
       const response = await dataAPI.update()
       const taskId = response.task_id
+
+      // Vercel 无状态运行模式会在同一次请求中完成任务并直接返回结果。
+      if (response.status === 'success') {
+        finishDataUpdate(response.result)
+        return
+      }
+      if (response.status === 'failed') {
+        throw new Error(response.error_msg || response.message || "数据更新失败")
+      }
       
       if (!taskId) {
         throw new Error("未收到任务ID")
@@ -132,31 +164,7 @@ export default function AdminPage() {
             setUpdating(false)
             setUpdateProgress(null)
             
-            // 构建成功消息
-            const result = taskStatus.result
-            let message = result?.message || "数据更新完成"
-            if (result?.total !== undefined) {
-              message += `\n总计: ${result.total}，成功: ${result.success}，失败: ${result.failed}`
-              if (result.details && result.details.length > 0) {
-                const failedDetails = result.details
-                  .filter((d: any) => !d.result?.success)
-                  .map((d: any) => `${d.asset_name}: ${d.result?.message || "失败"}`)
-                if (failedDetails.length > 0) {
-                  message += `\n\n失败详情:\n${failedDetails.join('\n')}`
-                }
-              }
-            }
-            
-            // 显示成功提示
-            setToastMessage({ type: 'success', message })
-
-            // 自动刷新数据
-            loadAssets()
-            // 让首页/榜单组件的 SWR 缓存全部过期重新拉取
-            void invalidateAfterDataUpdate()
-            
-            // 3秒后清除提示
-            setTimeout(() => setToastMessage(null), 3000)
+            finishDataUpdate(taskStatus.result)
           } else if (taskStatus.status === 'failed') {
             if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
             if (timeoutRef.current) clearTimeout(timeoutRef.current)
