@@ -28,6 +28,21 @@ interface ChartDataPoint {
   [key: string]: string | number | undefined | null
 }
 
+// 高区分度配色：深色系、白底对比度高，避免默认浅黄等低对比色
+const LINE_COLORS = [
+  "#2563eb", // 蓝
+  "#dc2626", // 红
+  "#059669", // 绿
+  "#9333ea", // 紫
+  "#ea580c", // 橙
+  "#0891b2", // 青
+  "#db2777", // 玫红
+  "#ca8a04", // 深黄（可读）
+]
+
+// 曲线末端标签的最小纵向间距（px）
+const END_LABEL_MIN_GAP = 18
+
 export function CumulativeReturnChart({
   assets,
   showChangeRate = true,
@@ -136,17 +151,6 @@ export function CumulativeReturnChart({
     )
   }
 
-  const colors = [
-    "#8884d8",
-    "#82ca9d",
-    "#ffc658",
-    "#ff7300",
-    "#0088fe",
-    "#00c49f",
-    "#ffbb28",
-    "#ff8042",
-  ]
-
   const handleLegendClick = (e: any) => {
     const clickedCode = e.dataKey || e.value
     if (selectedAssetCode === clickedCode) {
@@ -154,6 +158,82 @@ export function CumulativeReturnChart({
     } else {
       setSelectedAssetCode(clickedCode)
     }
+  }
+
+  // 可视窗口内的数据点数（label 只收到窗口内的点，末点 index = visibleCount - 1）
+  const visibleCount = Math.max(1, effectiveRange.endIndex - effectiveRange.startIndex)
+
+  // 每次渲染重置末端标签占位（父组件每次 render 创建新数组，标签闭包捕获本回合的数组）
+  const endLabelSlots: { y: number; code: string }[] = []
+
+  // 为每条曲线生成末端标签渲染函数：
+  // - 仅在「可视窗口最后一个数据点」渲染（label 收到的 index 为窗口内相对索引）
+  // - 防重叠：与已占用的 y 槽位间距小于 END_LABEL_MIN_GAP 时，按相对方位向上/向下推开，保持纵向顺序与曲线终点一致
+  // - 返回空 <g/> 而非 null（recharts 类型要求 ReactElement）
+  const makeEndLabelContent = (assetCode: string, assetName: string, color: string) => {
+    let settledY: number | null = null
+    return (props: any) => {
+      const vb = props?.viewBox
+      if (
+        !vb ||
+        props.index !== visibleCount - 1 ||
+        props.value == null
+      ) {
+        return <g key={`end-label-${assetCode}`} />
+      }
+      // 首次有效解算后锁定 y（recharts 同参数内部重渲染时直接复用，避免重复占位）；
+      // 几何未就绪（测量期退化坐标）时返回空，等下一轮再解算
+      let finalY: number
+      if (settledY != null) {
+        finalY = settledY
+      } else {
+        if (!Number.isFinite(vb.y) || vb.y <= 0 || vb.y >= 400) {
+          return <g key={`end-label-${assetCode}`} />
+        }
+        let y = vb.y
+        for (let iter = 0; iter < 3; iter++) {
+          for (const slot of endLabelSlots) {
+            if (Math.abs(y - slot.y) < END_LABEL_MIN_GAP) {
+              y = y <= slot.y ? slot.y - END_LABEL_MIN_GAP : slot.y + END_LABEL_MIN_GAP
+            }
+          }
+        }
+        endLabelSlots.push({ y, code: assetCode })
+        settledY = y
+        finalY = y
+      }
+      return (
+        <text
+          key={`end-label-${assetCode}`}
+          x={vb.x + 6}
+          y={finalY}
+          textAnchor="start"
+          dominantBaseline="middle"
+          fill={color}
+          fontSize={12}
+          fontWeight={600}
+          stroke="#ffffff"
+          strokeWidth={3}
+          paintOrder="stroke"
+        >
+          {assetName}
+        </text>
+      )
+    }
+  }
+
+  const endLabelContents = assets.map((asset, i) =>
+    makeEndLabelContent(asset.code, asset.name, LINE_COLORS[i % LINE_COLORS.length])
+  )
+
+  // 图例卡片：取全量数据的最后一个非空值作为「最终收益/最新价」
+  const getFinalValue = (asset: PKPoolChartAsset): number | null => {
+    for (let i = asset.data.length - 1; i >= 0; i--) {
+      const p = asset.data[i]
+      const v = showChangeRate ? p.change_rate : p.close_price
+      if (v != null) return v as number
+    }
+    return null
   }
 
   return (
@@ -165,7 +245,7 @@ export function CumulativeReturnChart({
       </div>
       <div className="w-full h-[400px]" onWheel={handleWheel} style={{ overflow: "hidden" }}>
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={chartData} margin={{ top: 10, right: 20, left: 10, bottom: 80 }}>
+          <LineChart data={chartData} margin={{ top: 10, right: 90, left: 10, bottom: 80 }}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis
               dataKey="date"
@@ -202,19 +282,44 @@ export function CumulativeReturnChart({
                 const { payload } = props
                 if (!payload || !Array.isArray(payload)) return null
                 return (
-                  <div className="flex flex-wrap items-center justify-center gap-4 mt-4">
+                  <div className="flex flex-wrap items-center justify-center gap-2 mt-4">
                     {payload.map((entry: any, index: number) => {
                       const asset = assets.find((a) => a.code === entry.dataKey)
                       const user = asset?.user
+                      const finalValue = asset ? getFinalValue(asset) : null
+                      const isDimmed = selectedAssetCode !== null && selectedAssetCode !== entry.dataKey
                       return (
                         <div
                           key={`legend-${index}`}
                           onClick={() => handleLegendClick({ dataKey: entry.dataKey })}
-                          className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
-                          style={{ color: entry.color }}
+                          className={cn(
+                            "flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-border/60 cursor-pointer transition-opacity hover:bg-muted/50",
+                            isDimmed && "opacity-40"
+                          )}
                         >
+                          <span
+                            className="h-2.5 w-2.5 rounded-sm shrink-0"
+                            style={{ backgroundColor: entry.color }}
+                          />
                           {user && <UserAvatar user={user as User} size="sm" />}
-                          <span className="text-sm font-medium">{entry.dataKey}</span>
+                          <span className="text-sm font-medium text-foreground">
+                            {asset?.name ?? entry.dataKey}
+                          </span>
+                          <span className="text-xs text-muted-foreground">{entry.dataKey}</span>
+                          {finalValue != null && (
+                            <span
+                              className={cn(
+                                "text-sm font-semibold tabular-nums",
+                                showChangeRate
+                                  ? finalValue >= 0
+                                    ? "text-red-600"
+                                    : "text-green-600"
+                                  : "text-foreground"
+                              )}
+                            >
+                              {showChangeRate ? formatPercent(finalValue) : formatNumber(finalValue)}
+                            </span>
+                          )}
                         </div>
                       )
                     })}
@@ -231,12 +336,14 @@ export function CumulativeReturnChart({
                   key={asset.code}
                   type="monotone"
                   dataKey={asset.code}
-                  stroke={colors[index % colors.length]}
-                  name={asset.code}
+                  stroke={LINE_COLORS[index % LINE_COLORS.length]}
+                  name={asset.name || asset.code}
                   strokeWidth={strokeWidth}
                   strokeOpacity={opacity}
                   dot={false}
                   connectNulls
+                  isAnimationActive={false}
+                  label={{ content: endLabelContents[index] }}
                 />
               )
             })}
