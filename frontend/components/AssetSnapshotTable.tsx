@@ -36,8 +36,17 @@ interface SnapshotData {
 type SortField = "baseline_price" | "latest_close_price" | "market_cap" | "eps_forecast" | "change_rate" | "daily_change_rate" | "stability_score" | null
 type SortDirection = "asc" | "desc"
 
-export function AssetSnapshotTable({ className }: { className?: string }) {
-  const { data: snapshotData, error: swrError, isLoading, mutate } = useSnapshot()
+export function AssetSnapshotTable({
+  className,
+  initialData,
+}: {
+  className?: string
+  /** 服务端预取数据（ISR）：存在时首屏不再请求 */
+  initialData?: any[]
+}) {
+  const { data: snapshotData, error: swrError, isLoading, mutate } = useSnapshot(
+    initialData ? { fallbackData: initialData, revalidateOnMount: false } : undefined
+  )
   const data = (snapshotData as SnapshotData[] | undefined) ?? []
   const loading = isLoading && data.length === 0
   const error = swrError ? (swrError instanceof Error ? swrError.message : "加载数据失败") : null
@@ -137,7 +146,7 @@ export function AssetSnapshotTable({ className }: { className?: string }) {
       <div className="mb-4">
         <h3 className="text-lg font-semibold">核心资产明细表</h3>
       </div>
-      <table className="w-full border-collapse">
+      <table className="w-full min-w-[900px] border-collapse">
         <thead>
           <tr className="bg-gray-100">
             <th className="border p-2 text-left font-bold">关联用户</th>

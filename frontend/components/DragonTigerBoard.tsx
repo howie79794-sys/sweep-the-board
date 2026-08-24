@@ -14,10 +14,15 @@ import {
 
 interface DragonTigerBoardProps {
   className?: string
+  /** 服务端预取数据（ISR）：存在时首屏不再请求 */
+  initialData?: any
 }
 
-export function DragonTigerBoard({ className }: DragonTigerBoardProps) {
-  const { data: rankings, error: swrError, isLoading, mutate } = useRankings()
+export function DragonTigerBoard({ className, initialData }: DragonTigerBoardProps) {
+  const { data: rankings, error: swrError, isLoading, mutate } = useRankings(
+    undefined,
+    initialData ? { fallbackData: initialData, revalidateOnMount: false } : undefined
+  )
   const error = swrError ? (swrError.message || "加载排名失败") : null
 
   const loadRankings = () => mutate()

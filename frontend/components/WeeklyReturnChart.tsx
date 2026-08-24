@@ -23,11 +23,13 @@ interface WeeklyReturnChartProps {
   selectedAssetCode?: string | null
   /** 图例点击时回调，用于同步全局选中状态 */
   onSelectedAssetCodeChange?: (code: string | null) => void
+  /** 服务端预取数据（ISR）：存在时不再发请求 */
+  initialData?: AssetWeeklyData[]
 }
 
 interface DataPoint {
   date: string
-  change_rate: number
+  change_rate: number | null
 }
 
 interface AssetWeeklyData {
@@ -63,6 +65,7 @@ export function WeeklyReturnChart({
   className,
   selectedAssetCode: selectedAssetCodeProp,
   onSelectedAssetCodeChange,
+  initialData,
 }: WeeklyReturnChartProps) {
   const [chartData, setChartData] = useState<ChartDataPoint[]>([])
   const [loading, setLoading] = useState(true)
@@ -78,7 +81,8 @@ export function WeeklyReturnChart({
   const loadChartData = async () => {
     try {
       setLoading(true)
-      const data = await dataAPI.getWeeklyChartData()
+      // 服务端预取数据（ISR）：存在时不再发请求
+      const data = initialData ?? await dataAPI.getWeeklyChartData()
       if (!data || data.length === 0) {
         setError("暂无数据")
         return

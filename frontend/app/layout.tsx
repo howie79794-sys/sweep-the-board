@@ -91,28 +91,28 @@ export default function RootLayout({
       <body className={inter.className}>
         <div className="min-h-screen bg-background">
           <header className="border-b">
-            <div className="container mx-auto px-4 py-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h1 className="text-3xl font-bold">CoolDown龙虎榜</h1>
-                  <p className="text-muted-foreground mt-1">金融资产排行榜</p>
+            <div className="container mx-auto px-4 py-3 md:py-4">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="min-w-0">
+                  <h1 className="text-xl md:text-3xl font-bold truncate">CoolDown龙虎榜</h1>
+                  <p className="text-xs md:text-sm text-muted-foreground mt-0.5 md:mt-1">金融资产排行榜</p>
                 </div>
-                <nav className="flex gap-4">
+                <nav className="flex gap-1 md:gap-4 text-sm shrink-0">
                   <a
                     href="/"
-                    className="px-4 py-2 rounded hover:bg-secondary transition-colors"
+                    className="px-2 md:px-4 py-2 rounded hover:bg-secondary transition-colors"
                   >
                     首页
                   </a>
                   <a
                     href="/pk-pools"
-                    className="px-4 py-2 rounded hover:bg-secondary transition-colors"
+                    className="px-2 md:px-4 py-2 rounded hover:bg-secondary transition-colors"
                   >
                     自定义 PK
                   </a>
                   <a
                     href="/admin"
-                    className="px-4 py-2 rounded hover:bg-secondary transition-colors"
+                    className="px-2 md:px-4 py-2 rounded hover:bg-secondary transition-colors"
                   >
                     管理
                   </a>

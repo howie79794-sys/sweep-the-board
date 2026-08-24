@@ -2807,6 +2807,66 @@ def update_all_assets_data(db: Session, force: bool = False) -> Dict:
     return results
 
 
+def compute_stability_from_prices(prices: List[float]) -> Dict:
+    """
+    纯计算：价格序列 → 稳健度指标（无 DB 访问，供单资产/批量场景复用）
+
+    阈值校验：
+    - 有效价格 N < 3：返回默认值（需要至少 3 条价格产生 2 个收益率样本）
+
+    Returns:
+        dict: {stability_score, annual_volatility, daily_returns, remark?}
+    """
+    try:
+        if len(prices) < 3:
+            return {
+                "stability_score": 0.0,
+                "annual_volatility": 0.0,
+                "daily_returns": [],
+                "remark": "数据积累中",
+            }
+
+        arr = np.array(prices, dtype=float)
+
+        # 每日对数收益率: r_t = ln(P_t / P_{t-1})
+        log_returns = np.diff(np.log(arr))
+        if len(log_returns) == 0:
+            return {
+                "stability_score": 0.0,
+                "annual_volatility": 0.0,
+                "daily_returns": [],
+                "remark": "数据积累中",
+            }
+
+        # 年化波动率: σ_annual = std(r) × sqrt(252)，ddof=1 无偏估计，转百分比
+        annual_volatility = float(np.std(log_returns, ddof=1) * np.sqrt(252) * 100)
+
+        # 稳健性评分 = max(0, 100 - σ_annual)
+        stability_score = float(max(0.0, 100 * (1 - annual_volatility / 100)))
+
+        # 最近 20 个交易日的简单收益率（%）
+        daily_returns_pct = []
+        for i in range(max(0, len(arr) - 20), len(arr)):
+            if i > 0 and arr[i - 1] > 0:
+                daily_returns_pct.append(float((arr[i] - arr[i - 1]) / arr[i - 1] * 100))
+
+        result = {
+            "stability_score": round(stability_score, 2),
+            "annual_volatility": round(annual_volatility, 2),
+            "daily_returns": [round(r, 2) for r in daily_returns_pct],
+        }
+        if len(prices) < 10:
+            result["remark"] = f"数据样本较少 (N={len(prices)})，结果仅供参考"
+        return result
+    except Exception:
+        return {
+            "stability_score": 0.0,
+            "annual_volatility": 0.0,
+            "daily_returns": [],
+            "remark": "计算异常",
+        }
+
+
 def calculate_stability_metrics(asset_id: int, db: Session) -> Dict:
     """
     计算资产稳健度指标（增强鲁棒性版本）
@@ -2864,61 +2924,8 @@ def calculate_stability_metrics(asset_id: int, db: Session) -> Dict:
             if md.close_price is not None and md.close_price > 0:
                 prices.append(float(md.close_price))
         
-        # 再次检查有效数据量（需要至少3条有效价格才能产生2个收益率样本）
-        if len(prices) < 3:
-            print(f"[市场数据] [稳健度计算] 数据积累中 (有效价格N={len(prices)} < 3)，返回默认值")
-            return {
-                "stability_score": 0.0,
-                "annual_volatility": 0.0,
-                "daily_returns": [],
-                "remark": "数据积累中"
-            }
-        
-        prices = np.array(prices)
-        
-        # 计算每日对数收益率: r_t = ln(P_t / P_{t-1})
-        log_returns = np.diff(np.log(prices))
-        
-        # 检查收益率数据是否有效
-        if len(log_returns) == 0:
-            print(f"[市场数据] [稳健度计算] 无法计算收益率，数据积累中，返回默认值")
-            return {
-                "stability_score": 0.0,
-                "annual_volatility": 0.0,
-                "daily_returns": [],
-                "remark": "数据积累中"
-            }
-        
-        # 计算年化波动率: σ_annual = std(r) × sqrt(252)
-        # 252 是A股每年的交易日数
-        # 使用 ddof=1 进行无偏估计
-        annual_volatility = float(np.std(log_returns, ddof=1) * np.sqrt(252) * 100)  # 转换为百分比
-        
-        # 计算稳健性评分: stability_score = max(0, 100 * (1 - σ_annual))
-        # 注意：σ_annual 已经是百分比，所以需要除以100
-        stability_score = float(max(0, 100 * (1 - annual_volatility / 100)))
-        
-        # 获取最近20个交易日的每日收益率（转换为百分比）
-        # 使用简单收益率而不是对数收益率，更直观
-        daily_returns_pct = []
-        for i in range(max(0, len(prices) - 20), len(prices)):
-            if i > 0 and prices[i-1] > 0:
-                simple_return = (prices[i] - prices[i-1]) / prices[i-1] * 100
-                daily_returns_pct.append(float(simple_return))
-        
-        print(f"[市场数据] [稳健度计算] 计算完成: 年化波动率={annual_volatility:.2f}%, 稳健性评分={stability_score:.2f}, 最近20日收益率数量={len(daily_returns_pct)}")
-        
-        result = {
-            "stability_score": round(stability_score, 2),
-            "annual_volatility": round(annual_volatility, 2),
-            "daily_returns": [round(r, 2) for r in daily_returns_pct]
-        }
-        
-        # 如果数据量较少，添加备注
-        if data_count < 10:
-            result["remark"] = f"数据样本较少 (N={data_count})，结果仅供参考"
-        
-        return result
+        # 纯计算委托给公共函数（单资产/批量共用同一套口径）
+        return compute_stability_from_prices(prices)
         
     except Exception as e:
         print(f"[市场数据] [稳健度计算] 计算失败: {type(e).__name__}: {str(e)}")

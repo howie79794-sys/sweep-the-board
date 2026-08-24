@@ -4,6 +4,7 @@
 import logging
 import logging.config
 import os
+import secrets
 import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -57,6 +58,37 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+# ============================================================
+# 写操作鉴权：所有 /api/* 的 POST/PUT/PATCH/DELETE 需要 X-Admin-Key
+# - ADMIN_API_KEY 未配置：拒绝所有写操作（安全默认）
+# - 读接口（GET）不受影响；GitHub Actions 直连数据库，不走此层
+# ============================================================
+ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "").strip()
+_WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+@app.middleware("http")
+async def admin_key_middleware(request: Request, call_next):
+    if request.method in _WRITE_METHODS and request.url.path.startswith("/api"):
+        if not ADMIN_API_KEY:
+            logger.warning("写操作被拒绝：服务端未配置 ADMIN_API_KEY path=%s", request.url.path)
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "服务端未配置 ADMIN_API_KEY，写操作已禁用"},
+            )
+        provided = request.headers.get("x-admin-key", "")
+        if not secrets.compare_digest(provided, ADMIN_API_KEY):
+            logger.warning(
+                "写操作鉴权失败 path=%s remote=%s",
+                request.url.path,
+                request.client.host if request.client else "unknown",
+            )
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "缺少或无效的管理密钥，请在请求头携带 X-Admin-Key"},
+            )
+    return await call_next(request)
 
 # 配置CORS
 app.add_middleware(

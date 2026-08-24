@@ -29,6 +29,8 @@ interface AllAssetsChartProps {
   selectedAssetCode?: string | null
   /** 图例点击时回调，用于同步全局选中状态 */
   onSelectedAssetCodeChange?: (code: string | null) => void
+  /** 服务端预取数据（ISR）：存在时不再发请求 */
+  initialData?: AssetChartData[]
 }
 
 interface ChartDataPoint {
@@ -65,6 +67,7 @@ export function AllAssetsChart({
   groupId,
   selectedAssetCode: selectedAssetCodeProp,
   onSelectedAssetCodeChange,
+  initialData,
 }: AllAssetsChartProps) {
   const [chartData, setChartData] = useState<ChartDataPoint[]>([])
   const [loading, setLoading] = useState(true)
@@ -95,7 +98,8 @@ export function AllAssetsChart({
   const loadChartData = async () => {
     try {
       setLoading(true)
-      const data = await dataAPI.getAllAssetsChartData({
+      // 服务端预取数据（ISR）：存在时不再发请求
+      const data = initialData ?? await dataAPI.getAllAssetsChartData({
         start_date: "2026-01-05",
       })
 

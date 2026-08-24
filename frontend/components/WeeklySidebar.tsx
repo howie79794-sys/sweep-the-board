@@ -18,10 +18,14 @@ interface WeeklySidebarProps {
   selectedAssetCode?: string | null
   /** 点击榜单项时回调 */
   onSelectAssetCode?: (assetCode: string | null) => void
+  /** 服务端预取数据（ISR）：存在时首屏不再请求 */
+  initialData?: { items: any[] }
 }
 
-export function WeeklySidebar({ className, selectedAssetCode, onSelectAssetCode }: WeeklySidebarProps) {
-  const { data, error: swrError, isLoading } = useWeeklyRankings()
+export function WeeklySidebar({ className, selectedAssetCode, onSelectAssetCode, initialData }: WeeklySidebarProps) {
+  const { data, error: swrError, isLoading } = useWeeklyRankings(
+    initialData ? { fallbackData: initialData, revalidateOnMount: false } : undefined
+  )
   const items = data?.items ?? []
   const loading = isLoading && !data
   const error = swrError ? (swrError.message || "加载失败") : null
@@ -29,7 +33,8 @@ export function WeeklySidebar({ className, selectedAssetCode, onSelectAssetCode 
   return (
     <aside
       className={cn(
-        "hidden lg:block w-[240px] shrink-0 self-start rounded-xl overflow-hidden",
+        // 移动端：整宽横向滚动条；lg 以上：固定 240px 侧栏
+        "w-full lg:w-[240px] shrink-0 self-start rounded-xl overflow-hidden",
         // Glassmorphism: 半透明白 + 模糊
         "bg-white/70 backdrop-blur-[10px]",
         "border border-white/80 shadow-lg",
@@ -68,7 +73,7 @@ export function WeeklySidebar({ className, selectedAssetCode, onSelectAssetCode 
         )}
 
         {!loading && !error && items.length > 0 && (
-          <ul className="space-y-2 h-auto min-h-0 overflow-y-auto pr-1">
+          <ul className="flex gap-2 overflow-x-auto pb-2 lg:block lg:space-y-2 lg:overflow-visible lg:pb-0 lg:pr-1">
             {items.map((item) => {
               const isChampion = item.rank === 1
               const isLastPlace = item.rank === items.length
@@ -76,7 +81,7 @@ export function WeeklySidebar({ className, selectedAssetCode, onSelectAssetCode 
               const isSelected = selectedAssetCode === item.asset_code
 
               return (
-                <li key={`${item.asset_id}-${item.rank}`}>
+                <li key={`${item.asset_id}-${item.rank}`} className="min-w-[190px] shrink-0 lg:min-w-0 lg:shrink">
                   <button
                     type="button"
                     onClick={() => onSelectAssetCode?.(isSelected ? null : item.asset_code)}

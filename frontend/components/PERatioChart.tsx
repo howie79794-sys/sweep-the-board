@@ -22,6 +22,8 @@ interface PERatioChartProps {
   chartRange?: { startIndex: number; endIndex: number }
   onChartRangeChange?: (startIndex: number, endIndex: number) => void
   groupId?: string
+  /** 服务端预取数据（ISR）：存在时不再发请求 */
+  initialData?: AssetChartData[]
 }
 
 interface ChartDataPoint {
@@ -56,7 +58,8 @@ export function PERatioChart({
   chartRange,
   onChartRangeChange,
   groupId,
-}: PERatioChartProps) {
+  initialData,
+ }: PERatioChartProps) {
   const [chartData, setChartData] = useState<ChartDataPoint[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -85,7 +88,7 @@ export function PERatioChart({
   const loadChartData = async () => {
     try {
       setLoading(true)
-      const data = await dataAPI.getAllAssetsChartData({
+      const data = initialData ?? await dataAPI.getAllAssetsChartData({
         start_date: "2026-01-05",
       })
 

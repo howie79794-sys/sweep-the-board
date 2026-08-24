@@ -4,7 +4,7 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Body, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from typing import List, Optional
+from typing import List, Optional, Dict
 from pathlib import Path
 from datetime import date, datetime, timedelta
 import os
@@ -14,7 +14,7 @@ import traceback
 
 from database.config import get_db
 from database.models import User, Asset, MarketData, Ranking, PKPool, PKPoolAsset
-from services.market_data import update_asset_data, update_all_assets_data, get_latest_trading_date, calculate_stability_metrics, custom_update_asset_data
+from services.market_data import update_asset_data, update_all_assets_data, get_latest_trading_date, calculate_stability_metrics, custom_update_asset_data, compute_stability_from_prices
 from services.ranking import save_rankings, get_or_set_baseline_price, calculate_weekly_rankings, get_weekly_baseline_date, get_beijing_date
 from services.storage import upload_avatar_file, delete_avatar, normalize_avatar_url
 from services.asset import AssetService
@@ -1310,126 +1310,95 @@ async def get_all_assets_chart_data(
     end_date: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """获取所有资产的图表数据（收益率和收盘价），用于首页图表展示"""
-    # 默认使用基准日期作为起始日期
+    """
+    获取所有核心资产的图表数据（收益率和收盘价），用于首页图表展示。
+
+    批量版：2~3 次查询替代原逐资产循环；只返回真实交易日数据，
+    不再填充周末（前端 X 轴只显示周一到周五）。
+    """
     baseline_date_obj = date.fromisoformat(BASELINE_DATE) if isinstance(BASELINE_DATE, str) else BASELINE_DATE
     start_date_obj = date.fromisoformat(start_date) if start_date else baseline_date_obj
     end_date_obj = date.fromisoformat(end_date) if end_date else date.today()
-    
-    # 获取所有活跃的核心资产
+
     assets = db.query(Asset).join(User).filter(User.is_active == True, Asset.is_core == True).all()
-    
+    if not assets:
+        return []
+
+    asset_ids = [a.id for a in assets]
+
+    # 一次拉全日期范围内的行情，按资产分组（已按日期升序）
+    rows = (
+        db.query(MarketData)
+        .filter(
+            MarketData.asset_id.in_(asset_ids),
+            MarketData.date >= start_date_obj,
+            MarketData.date <= end_date_obj,
+        )
+        .order_by(MarketData.asset_id.asc(), MarketData.date.asc())
+        .all()
+    )
+    series_by_asset: Dict[int, list] = {}
+    for r in rows:
+        series_by_asset.setdefault(r.asset_id, []).append(r)
+
+    # 基准价兜底：范围查询不含基准日时，单独补一次基准行查询
+    baseline_by_asset: Dict[int, MarketData] = {}
+    if start_date_obj > baseline_date_obj:
+        baseline_rows = db.query(MarketData).filter(
+            MarketData.asset_id.in_(asset_ids),
+            MarketData.date == baseline_date_obj,
+        ).all()
+        for b in baseline_rows:
+            baseline_by_asset[b.asset_id] = b
+
     result = []
     for asset in assets:
-        # 获取该资产在日期范围内的市场数据
-        market_data_query = db.query(MarketData).filter(
-            MarketData.asset_id == asset.id,
-            MarketData.date >= start_date_obj,
-            MarketData.date <= end_date_obj
-        ).order_by(MarketData.date.asc())
-        
-        market_data_list = market_data_query.all()
-        
-        # 获取基准价格
+        series = series_by_asset.get(asset.id, [])
+        if not series:
+            continue
+
+        # 基准价：资产表 → 基准日行情
         baseline_price = asset.baseline_price
         if not baseline_price:
-            # 如果没有基准价格，尝试从基准日期的市场数据获取
-            baseline_data = db.query(MarketData).filter(
-                MarketData.asset_id == asset.id,
-                MarketData.date == baseline_date_obj
-            ).first()
+            baseline_data = baseline_by_asset.get(asset.id) or (
+                next((m for m in series if m.date == baseline_date_obj), None)
+                if start_date_obj <= baseline_date_obj
+                else None
+            )
             if baseline_data:
                 baseline_price = baseline_data.close_price
-        
-        # 构建数据点，并填充周末数据（使用前一个交易日的值）
+
         data_points = []
-        last_valid_data = None  # 用于存储最近一个有效交易日的数据
-        
-        # 生成日期范围内的所有日期（包括周末）
-        current_date = start_date_obj
-        while current_date <= end_date_obj:
-            # 查找该日期是否有市场数据
-            md = next((m for m in market_data_list if m.date == current_date), None)
-            
-            if md:
-                # 有数据，使用实际数据
-                last_valid_data = {
-                    "close_price": md.close_price,
-                    "pe_ratio": md.pe_ratio if md.pe_ratio is not None else 0.0,
-                    "pb_ratio": md.pb_ratio if md.pb_ratio is not None else 0.0,
-                    "market_cap": md.market_cap if md.market_cap is not None else 0.0,
-                    "eps_forecast": md.eps_forecast if md.eps_forecast is not None else 0.0,
-                }
-            elif last_valid_data:
-                # 无数据但之前有有效数据（可能是周末），使用前一个交易日的值
-                # 直接构建数据点，使用前一个交易日的值
-                data_point = {
-                    "date": current_date.isoformat(),
-                    "close_price": last_valid_data["close_price"],
-                    "pe_ratio": last_valid_data["pe_ratio"],
-                    "pb_ratio": last_valid_data["pb_ratio"],
-                    "market_cap": last_valid_data["market_cap"],
-                    "eps_forecast": last_valid_data["eps_forecast"],
-                }
-                
-                # 计算收益率（相对于基准价格）
-                if baseline_price and baseline_price > 0:
-                    change_rate = ((last_valid_data["close_price"] - baseline_price) / baseline_price) * 100
-                    data_point["change_rate"] = change_rate
-                else:
-                    data_point["change_rate"] = None
-                
-                data_points.append(data_point)
-                current_date += timedelta(days=1)
-                continue
-            else:
-                # 无数据且之前也没有有效数据，跳过该日期
-                current_date += timedelta(days=1)
-                continue
-            
-            # 构建数据点（有实际数据的情况）
+        for md in series:
             data_point = {
                 "date": md.date.isoformat(),
                 "close_price": md.close_price,
             }
-            
-            # 计算收益率（相对于基准价格）
             if baseline_price and baseline_price > 0:
-                change_rate = ((md.close_price - baseline_price) / baseline_price) * 100
-                data_point["change_rate"] = change_rate
+                data_point["change_rate"] = ((md.close_price - baseline_price) / baseline_price) * 100
             else:
                 data_point["change_rate"] = None
-            
-            # 添加所有财务指标数据 - 确保返回数字 0 而不是 null，以便前端 Tooltip 能够正常捕获数值
+            # 财务指标：数字 0 而非 null，保证前端 Tooltip 正常取值
             data_point["pe_ratio"] = md.pe_ratio if md.pe_ratio is not None else 0.0
             data_point["pb_ratio"] = md.pb_ratio if md.pb_ratio is not None else 0.0
             data_point["market_cap"] = md.market_cap if md.market_cap is not None else 0.0
             data_point["eps_forecast"] = md.eps_forecast if md.eps_forecast is not None else 0.0
-            
-            # 调试：打印第一条数据的财务指标
-            if len(data_points) == 0:
-                print(f"[API] 图表数据点财务指标 (资产: {asset.code}): PE={md.pe_ratio}, PB={md.pb_ratio}, 市值={md.market_cap}, EPS={md.eps_forecast}")
-            
             data_points.append(data_point)
-            
-            # 移动到下一天
-            current_date += timedelta(days=1)
-        
-        if data_points:  # 只有当有数据点时才添加到结果中
-            result.append({
-                "asset_id": asset.id,
-                "code": asset.code,
-                "name": asset.name,
-                "baseline_price": baseline_price,
-                "baseline_date": asset.baseline_date.isoformat() if asset.baseline_date else None,
-                "user": {
-                    "id": asset.user.id,
-                    "name": asset.user.name,
-                    "avatar_url": normalize_avatar_url(asset.user.avatar_url) if asset.user.avatar_url else None
-                },
-                "data": data_points
-            })
-    
+
+        result.append({
+            "asset_id": asset.id,
+            "code": asset.code,
+            "name": asset.name,
+            "baseline_price": baseline_price,
+            "baseline_date": asset.baseline_date.isoformat() if asset.baseline_date else None,
+            "user": {
+                "id": asset.user.id,
+                "name": asset.user.name,
+                "avatar_url": normalize_avatar_url(asset.user.avatar_url) if asset.user.avatar_url else None
+            },
+            "data": data_points
+        })
+
     return result
 
 
@@ -1535,87 +1504,61 @@ async def get_market_types():
 @router.get("/data/snapshot", tags=["data"])
 async def get_snapshot_data(db: Session = Depends(get_db)):
     """
-    获取所有资产在"北京时间上个交易日"的最新快照数据
-    
+    获取所有核心资产的最新快照（批量版：3 次查询替代原 8 资产 × 5 查询的 N+1）
+
     返回每个资产的最新一条数据，包含：
-    - 关联用户信息
-    - 股票代码/名称
-    - 基准价格（2026/01/05的收盘价）
-    - 最新收盘价（上个交易日的成交价）
-    - 最新总市值（亿元）
-    - EPS预测
-    - 累计收益（相对于基准价格）
+    - 关联用户信息 / 股票代码、名称 / 基准价格（2026/01/05 收盘价）
+    - 最新收盘价、涨跌幅、总市值、EPS、累计收益、稳健度指标
     """
-    # 获取最新交易日
     latest_trading_date = get_latest_trading_date(db)
-    
-    # 获取所有活跃的核心资产
-    assets = db.query(Asset).join(User).filter(User.is_active == True, Asset.is_core == True).all()
-    
     baseline_date_obj = date.fromisoformat(BASELINE_DATE) if isinstance(BASELINE_DATE, str) else BASELINE_DATE
-    
+
+    assets = db.query(Asset).join(User).filter(User.is_active == True, Asset.is_core == True).all()
+    if not assets:
+        return []
+
+    asset_ids = [a.id for a in assets]
+
+    # 一次拉全所有核心资产自基准日以来的行情（8 资产 × ~160 交易日 ≈ 1300 行）
+    rows = (
+        db.query(MarketData)
+        .filter(MarketData.asset_id.in_(asset_ids), MarketData.date >= baseline_date_obj)
+        .order_by(MarketData.asset_id.asc(), MarketData.date.asc())
+        .all()
+    )
+    series_by_asset: Dict[int, list] = {}
+    for r in rows:
+        series_by_asset.setdefault(r.asset_id, []).append(r)
+
     result = []
     for asset in assets:
         try:
-            # 获取该资产在最新交易日的数据
-            latest_data = db.query(MarketData).filter(
-                MarketData.asset_id == asset.id,
-                MarketData.date == latest_trading_date
-            ).first()
-            
-            # 获取基准价格（2026/01/05的收盘价）
-            baseline_data = db.query(MarketData).filter(
-                MarketData.asset_id == asset.id,
-                MarketData.date == baseline_date_obj
-            ).first()
-            
+            series = series_by_asset.get(asset.id, [])
+            baseline_data = next((m for m in series if m.date == baseline_date_obj), None)
+            latest_data = next((m for m in series if m.date == latest_trading_date), None)
+            yesterday_data = next((m for m in reversed(series) if m.date < latest_trading_date), None)
+
             baseline_price = baseline_data.close_price if baseline_data else asset.baseline_price
             baseline_pe_ratio = baseline_data.pe_ratio if baseline_data and baseline_data.pe_ratio is not None else None
-            
-            # 计算累计收益
+
             change_rate = None
             if latest_data and baseline_price and baseline_price > 0:
                 change_rate = ((latest_data.close_price - baseline_price) / baseline_price) * 100
-            
-            # 获取昨天的收盘价（用于计算涨跌幅）
-            # 查找最新交易日之前最近的一个交易日的数据
-            yesterday_data = db.query(MarketData).filter(
-                MarketData.asset_id == asset.id,
-                MarketData.date < latest_trading_date
-            ).order_by(MarketData.date.desc()).first()
-            
+
             yesterday_close_price = yesterday_data.close_price if yesterday_data else None
-            
-            # 计算今天对比昨天的涨跌幅
             daily_change_rate = None
             if latest_data and yesterday_close_price and yesterday_close_price > 0:
                 daily_change_rate = ((latest_data.close_price - yesterday_close_price) / yesterday_close_price) * 100
-            
-            # 显式获取财务指标，确保字段存在
+
             pe_ratio = latest_data.pe_ratio if latest_data and latest_data.pe_ratio is not None else None
             pb_ratio = latest_data.pb_ratio if latest_data and latest_data.pb_ratio is not None else None
             market_cap = latest_data.market_cap if latest_data and latest_data.market_cap is not None else None
             eps_forecast = latest_data.eps_forecast if latest_data and latest_data.eps_forecast is not None else None
-            
-            # 调试日志
-            if latest_data:
-                print(f"[API] Snapshot财务指标 (资产: {asset.code}): PE={pe_ratio}, PB={pb_ratio}, 市值={market_cap}, EPS={eps_forecast}")
-            
-            # 计算稳健度指标（增加错误处理，确保单个资产失败不阻塞其他资产）
-            try:
-                stability_metrics = calculate_stability_metrics(asset.id, db)
-                print(f"[API] Snapshot稳健度指标 (资产: {asset.code}): 稳健性评分={stability_metrics.get('stability_score')}, 年化波动率={stability_metrics.get('annual_volatility')}%, 收益率数据数量={len(stability_metrics.get('daily_returns', []))}")
-            except Exception as e:
-                # 单个资产稳健度计算失败，使用默认值，不阻塞其他资产
-                print(f"[API] Snapshot稳健度计算失败 (资产: {asset.code}): {type(e).__name__}: {str(e)}")
-                traceback.print_exc()
-                stability_metrics = {
-                    "stability_score": 0.0,
-                    "annual_volatility": 0.0,
-                    "daily_returns": [],
-                    "remark": f"计算异常: {type(e).__name__}"
-                }
-            
+
+            # 稳健度：同一份内存数据直接计算（口径与单资产版一致）
+            prices = [float(m.close_price) for m in series if m.close_price is not None and m.close_price > 0]
+            stability_metrics = compute_stability_from_prices(prices)
+
             result.append({
                 "asset_id": asset.id,
                 "code": asset.code,
@@ -1642,12 +1585,10 @@ async def get_snapshot_data(db: Session = Depends(get_db)):
                 "daily_returns": stability_metrics.get("daily_returns", []),
             })
         except Exception as e:
-            # 单个资产处理失败，记录错误但继续处理其他资产
             print(f"[API] Snapshot处理资产失败 (资产: {asset.code if asset else 'unknown'}): {type(e).__name__}: {str(e)}")
             traceback.print_exc()
-            # 跳过该资产，继续处理下一个
             continue
-    
+
     return result
 
 

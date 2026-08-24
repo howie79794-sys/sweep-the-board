@@ -18,18 +18,33 @@ const getAPIBaseURL = () => {
 
 const API_BASE_URL = getAPIBaseURL()
 
+/** 管理密钥：admin 页保存到 localStorage，所有写请求自动携带 */
+export const ADMIN_KEY_STORAGE = "admin_api_key"
+
+function getAdminKey(): string | null {
+  if (typeof window === "undefined") return null
+  try {
+    return window.localStorage.getItem(ADMIN_KEY_STORAGE) || null
+  } catch {
+    return null
+  }
+}
+
 async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> {
   // 如果是相对路径，直接使用；如果是绝对路径，使用API_BASE_URL
   const url = endpoint.startsWith('http') 
     ? endpoint 
     : `${API_BASE_URL}${endpoint}`
   
+  const adminKey = getAdminKey()
+
   let response: Response
   try {
     response = await fetch(url, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
+        ...(adminKey ? { 'X-Admin-Key': adminKey } : {}),
         ...options?.headers,
       },
     })
@@ -154,6 +169,7 @@ export const userAPI = {
     const response = await fetch(url, {
       method: 'POST',
       body: formData,
+      headers: getAdminKey() ? { 'X-Admin-Key': getAdminKey()! } : undefined,
     })
     if (!response.ok) {
       // 尝试从响应中提取错误信息

@@ -91,7 +91,7 @@ export function AssetDetailTable({ data, className }: AssetDetailTableProps) {
       <div className="mb-4">
         <h3 className="text-lg font-semibold">资产分析明细表</h3>
       </div>
-      <table className="w-full border-collapse">
+      <table className="w-full min-w-[900px] border-collapse">
         <thead>
           <tr className="bg-gray-100">
             <th className="border p-2 text-left font-bold">关联用户</th>

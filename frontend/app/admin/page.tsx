@@ -6,6 +6,7 @@ import { invalidateAfterDataUpdate, invalidateUsersAndAssets } from "@/lib/hooks
 import { type User, type Asset } from "@/types"
 import { UserAvatar } from "@/components/UserAvatar"
 import { CustomUpdateModal } from "@/components/CustomUpdateModal"
+import { AdminKeyBar } from "@/components/AdminKeyBar"
 import { cn } from "@/lib/utils"
 
 export default function AdminPage() {
@@ -479,6 +480,9 @@ export default function AdminPage() {
         <h1 className="text-3xl font-bold mb-2">管理界面</h1>
         <p className="text-muted-foreground">管理用户、资产和数据</p>
       </div>
+
+      {/* 管理密钥：写操作（增删改/触发更新）需要携带 X-Admin-Key */}
+      <AdminKeyBar />
 
       {/* 标签页 */}
       <div className="flex gap-4 border-b">
