@@ -213,7 +213,11 @@ if AKSHARE_AVAILABLE:
 
     @with_retry(timeout=30, attempts=3, source="akshare")
     def _ak_fund_etf_hist_sina(code: str):
-        return ak.fund_etf_hist_sina(code)
+        # 新浪要求市场前缀；裸代码 518880 会得到空行情并错误降级到基金净值。
+        symbol = code.lower()
+        if len(symbol) == 6 and symbol.isdigit():
+            symbol = ("sh" if symbol.startswith("5") else "sz") + symbol
+        return ak.fund_etf_hist_sina(symbol=symbol)
 
     @with_retry(timeout=30, attempts=3, source="akshare")
     def _ak_fund_open_fund_info_em(*args, **kwargs):
