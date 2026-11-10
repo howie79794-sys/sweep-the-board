@@ -139,6 +139,13 @@ class ScheduledExitTests(unittest.TestCase):
 
 
 class ProviderDateTests(unittest.TestCase):
+    def test_etf_symbol_includes_exchange(self):
+        ak = MagicMock()
+        fetch = load_function("services/market_data.py", "_ak_fund_etf_hist_sina", {"ak": ak})
+        for code, expected in [("518880", "sh518880"), ("159919", "sz159919"), ("SH518880", "sh518880")]:
+            fetch(code)
+            ak.fund_etf_hist_sina.assert_called_with(symbol=expected)
+
     def test_futures_uses_supported_signature_and_filters_dates(self):
         ak = MagicMock()
         ak.futures_zh_daily_sina.return_value = pd.DataFrame({
