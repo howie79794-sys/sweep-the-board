@@ -24,7 +24,7 @@ interface WeeklySidebarProps {
 
 export function WeeklySidebar({ className, selectedAssetCode, onSelectAssetCode, initialData }: WeeklySidebarProps) {
   const { data, error: swrError, isLoading } = useWeeklyRankings(
-    initialData ? { fallbackData: initialData, revalidateOnMount: false } : undefined
+    { fallbackData: initialData ?? undefined, revalidateOnMount: true, refreshInterval: 300000 }
   )
   const items = data?.items ?? []
   const loading = isLoading && !data

@@ -45,7 +45,7 @@ export function AssetSnapshotTable({
   initialData?: any[]
 }) {
   const { data: snapshotData, error: swrError, isLoading, mutate } = useSnapshot(
-    initialData ? { fallbackData: initialData, revalidateOnMount: false } : undefined
+    { fallbackData: initialData ?? undefined, revalidateOnMount: true, refreshInterval: 300000 }
   )
   const data = (snapshotData as SnapshotData[] | undefined) ?? []
   const loading = isLoading && data.length === 0

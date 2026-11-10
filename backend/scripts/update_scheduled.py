@@ -44,10 +44,12 @@ def main() -> int:
         }
         logger.info("定时行情更新完成: %s", json.dumps(summary, ensure_ascii=False))
 
-        # 单点失败会在下一次定时任务中继续重试；只有全部失败才让工作流失败，
-        # 避免外部行情源的短暂波动制造持续红灯。
-        if summary["total"] > 0 and summary["success"] == 0:
-            logger.error("所有资产更新均失败")
+        # 已成功写入的资产保留；任何资产失败都必须反映在工作流状态中。
+        for item in result.get("details", []):
+            if not item["result"].get("success"):
+                logger.error("未更新 %s: %s", item["asset_name"], item["result"].get("message"))
+        if summary["failed"] > 0 or summary["total"] == 0 or result.get("error"):
+            logger.error("存在未取得有效行情的资产，不能将本次运行判定为全部成功")
             return 1
         return 0
     except Exception:

@@ -12,7 +12,7 @@ import {
   ResponsiveContainer,
   Brush,
 } from "recharts"
-import { dataAPI } from "@/lib/api"
+import { useAllAssetsChart } from "@/lib/hooks"
 import { formatPercent, formatNumber, formatChartAxisDate, formatTooltipDate, CHART_DEFAULT_VISIBLE_POINTS, cn } from "@/lib/utils"
 import { UserAvatar } from "@/components/UserAvatar"
 import { type User } from "@/types"
@@ -76,10 +76,15 @@ export function AllAssetsChart({
   const [internalSelected, setInternalSelected] = useState<string | null>(null)
   const [range, setRange] = useState({ startIndex: 0, endIndex: 0 })
   const selectedAssetCode = selectedAssetCodeProp ?? internalSelected
+  const { data: liveData, error: fetchError } = useAllAssetsChart(
+    { start_date: "2026-01-05" },
+    { fallbackData: initialData ?? undefined, revalidateOnMount: true, refreshInterval: 300000 }
+  )
 
   useEffect(() => {
-    loadChartData()
-  }, [showChangeRate])
+    if (liveData) loadChartData()
+    if (fetchError) { setError(fetchError.message); setLoading(false) }
+  }, [showChangeRate, liveData, fetchError])
 
   useEffect(() => {
     if (chartData.length === 0) return
@@ -98,10 +103,8 @@ export function AllAssetsChart({
   const loadChartData = async () => {
     try {
       setLoading(true)
-      // 服务端预取数据（ISR）：存在时不再发请求
-      const data = initialData ?? await dataAPI.getAllAssetsChartData({
-        start_date: "2026-01-05",
-      })
+      // ISR 仅作为首屏数据，SWR 在挂载、聚焦和定时刷新时获取最新行情。
+      const data = liveData
 
       if (!data || data.length === 0) {
         setError("暂无数据")

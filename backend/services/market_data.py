@@ -11,6 +11,7 @@ import time
 import random
 import traceback
 import re
+import math
 
 from sqlalchemy.orm import Session
 from database.models import Asset, MarketData
@@ -506,44 +507,7 @@ def fetch_realtime_price_yfinance(code: str) -> Optional[pd.DataFrame]:
         
         ticker = yf.Ticker(symbol)
         
-        # 方法1: 尝试使用 fast_info 获取最新价格
-        try:
-            fast_info = ticker.fast_info
-            last_price = fast_info.get('lastPrice') or fast_info.get('regularMarketPrice')
-            
-            if last_price and not pd.isna(last_price):
-                beijing_time = get_beijing_time()
-                today_str = beijing_time.strftime('%Y-%m-%d')
-                
-                print(f"[市场数据] [yfinance实时] 通过 fast_info 获取到实时价格: {last_price}")
-                
-                # 获取财务指标
-                financial_indicators = fetch_financial_indicators_yfinance(ticker)
-                
-                # 构造 DataFrame
-                data = {
-                    'date': [today_str],
-                    'open': [None],
-                    'close': [float(last_price)],
-                    'high': [fast_info.get('dayHigh') or None],
-                    'low': [fast_info.get('dayLow') or None],
-                    'volume': [fast_info.get('volume') or None],
-                    'turnover': [None],
-                    'amplitude': [None],
-                    'change_pct': [None],
-                    'change_amount': [None],
-                    'turnover_rate': [None],
-                    'pe_ratio': [financial_indicators['pe_ratio']],
-                    'pb_ratio': [financial_indicators['pb_ratio']],
-                    'market_cap': [financial_indicators['market_cap']],
-                    'eps_forecast': [financial_indicators['eps_forecast']]
-                }
-                
-                df = pd.DataFrame(data)
-                print(f"[市场数据] [yfinance实时] 成功获取实时价格数据")
-                return df
-        except Exception as e:
-            print(f"[市场数据] [yfinance实时] fast_info 获取失败: {str(e)}")
+        # 只使用带交易日期的行情；fast_info 不提供可靠交易日期。
         
         # 方法2: 尝试使用 history(period='1d') 获取今天的数据
         try:
@@ -563,11 +527,9 @@ def fetch_realtime_price_yfinance(code: str) -> Optional[pd.DataFrame]:
                 }
                 df = df.rename(columns={k: v for k, v in column_mapping.items() if k in df.columns})
                 
-                # 格式化日期为今天
-                beijing_time = get_beijing_time()
-                today_str = beijing_time.strftime('%Y-%m-%d')
+                # 保留源数据交易日期，休市或行情延迟不能伪造成今日价格。
                 if 'date' in df.columns:
-                    df['date'] = today_str
+                    df['date'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
                 
                 # 添加缺失的列
                 expected_cols = ['date', 'open', 'close', 'high', 'low', 'volume', 'turnover', 'amplitude', 'change_pct', 'change_amount', 'turnover_rate']
@@ -918,45 +880,7 @@ def fetch_stock_data_yfinance(code: str, start_date: str, end_date: str, use_rea
         
         ticker = yf.Ticker(symbol)
         
-        # 优先尝试使用 fast_info 获取实时价格（特别是查询今天的数据时）
-        if end_date >= today_str:
-            try:
-                fast_info = ticker.fast_info
-                last_price = fast_info.get('lastPrice') or fast_info.get('regularMarketPrice') or fast_info.get('previousClose')
-                
-                if last_price and not pd.isna(last_price):
-                    print(f"[市场数据] [yfinance] 成功获取实时价格: {last_price}")
-                    
-                    # 获取财务指标
-                    financial_indicators = fetch_financial_indicators_yfinance(ticker)
-                    
-                    # 构造 DataFrame
-                    data = {
-                        'date': [today_str],
-                        'open': [fast_info.get('open') or fast_info.get('previousClose') or None],
-                        'close': [float(last_price)],
-                        'high': [fast_info.get('dayHigh') or fast_info.get('regularMarketDayHigh') or None],
-                        'low': [fast_info.get('dayLow') or fast_info.get('regularMarketDayLow') or None],
-                        'volume': [fast_info.get('volume') or fast_info.get('regularMarketVolume') or None],
-                        'turnover': [None],
-                        'amplitude': [None],
-                        'change_pct': [None],
-                        'change_amount': [None],
-                        'turnover_rate': [None],
-                        'pe_ratio': [financial_indicators['pe_ratio']],
-                        'pb_ratio': [financial_indicators['pb_ratio']],
-                        'market_cap': [financial_indicators['market_cap']],
-                        'eps_forecast': [financial_indicators['eps_forecast']]
-                    }
-                    
-                    df = pd.DataFrame(data)
-                    print(f"[市场数据] [yfinance] 使用 fast_info 数据，日期: {today_str}")
-                    return df
-            except AttributeError as e:
-                # fast_info 在某些环境下可能不存在
-                print(f"[市场数据] [yfinance] fast_info 不可用: {str(e)}，降级使用 history()")
-            except Exception as e:
-                print(f"[市场数据] [yfinance] fast_info 获取失败: {type(e).__name__}: {str(e)}，降级使用 history()")
+        # 必须读取带真实交易日期的 history，不能把最近价/昨日收盘价标成今日。
         
         # 降级使用 history() 方法（带重试 + 超时保护）
         try:
@@ -2218,7 +2142,7 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
     "今日"逻辑：
     - 获取当前自然日（北京时间）
     - 对于数据库中日期等于"今日"的记录，每次点击更新都强制发起 API 请求
-    - 如果今日 API 返回空（未开盘或接口延迟），则继续执行回溯逻辑，取上一个交易日的价格作为临时值，并在日志中标记为临时数据
+    - 如果今日 API 返回空（未开盘或接口延迟），保留历史数据及真实日期，本次不判定为更新成功
     
     "历史"逻辑：
     - 对于日期早于"今日"的所有记录：
@@ -2309,9 +2233,12 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
             asset_type=asset.asset_type,
             start_date=today.isoformat(),
             end_date=today.isoformat(),
-            db=db
+            db=None  # 更新验证必须读取外部行情，不能由数据库回退值冒充成功
         )
         
+        # 回退行情必须保留真实日期，不能当作今日成功取数。
+        today_data_list = [item for item in (today_data_list or [])
+                           if str(item.get("date"))[:10] == today.isoformat()]
         if today_data_list and len(today_data_list) > 0:
             today_data = today_data_list[0]
             today_price = today_data.get("close_price")
@@ -2320,7 +2247,7 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
             today_market_cap = today_data.get("market_cap")
             today_eps = today_data.get("eps_forecast")
             
-            if today_price:
+            if today_price is not None and math.isfinite(float(today_price)) and float(today_price) > 0:
                 # API 返回了今日数据，检查数据库中是否已有今日记录
                 existing_today = db.query(MarketData).filter(
                     MarketData.asset_id == asset_id,
@@ -2371,8 +2298,7 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
             else:
                 print(f"[市场数据] [今日实时覆盖] 警告: API 返回了数据但价格为空")
         else:
-            # API 返回空（未开盘或接口延迟），执行回溯逻辑
-            print(f"[市场数据] [今日实时覆盖] API 返回空，执行回溯逻辑获取临时数据...")
+            print("[市场数据] 今日接口未返回有效行情，保留历史数据")
             
             # 从数据库中查找最近一个交易日的数据
             latest_data = db.query(MarketData).filter(
@@ -2381,44 +2307,10 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
             ).order_by(MarketData.date.desc()).first()
             
             if latest_data:
-                # 使用最近交易日的数据作为临时值
-                print(f"[市场数据] [今日实时覆盖] 使用最近交易日 {latest_data.date} 的数据作为临时值 (is_temporary=True)")
-                
-                existing_today = db.query(MarketData).filter(
-                    MarketData.asset_id == asset_id,
-                    MarketData.date == today
-                ).first()
-                
-                if existing_today:
-                    # 更新现有记录为临时数据
-                    existing_today.close_price = latest_data.close_price
-                    existing_today.volume = latest_data.volume
-                    existing_today.turnover_rate = latest_data.turnover_rate
-                    existing_today.pe_ratio = latest_data.pe_ratio
-                    existing_today.pb_ratio = latest_data.pb_ratio
-                    existing_today.market_cap = latest_data.market_cap
-                    existing_today.eps_forecast = latest_data.eps_forecast
-                    print(f"[市场数据] [今日实时覆盖] 更新今日记录为临时数据 (is_temporary=True): 价格={latest_data.close_price}")
-                else:
-                    # 创建临时记录
-                    market_data = MarketData(
-                        asset_id=asset_id,
-                        date=today,
-                        close_price=latest_data.close_price,
-                        volume=latest_data.volume,
-                        turnover_rate=latest_data.turnover_rate,
-                        pe_ratio=latest_data.pe_ratio,
-                        pb_ratio=latest_data.pb_ratio,
-                        market_cap=latest_data.market_cap,
-                        eps_forecast=latest_data.eps_forecast,
-                        additional_data=latest_data.additional_data
-                    )
-                    db.add(market_data)
-                    new_data_count += 1
-                    print(f"[市场数据] [今日实时覆盖] 创建今日临时记录 (is_temporary=True): 价格={latest_data.close_price}")
-                
+                # 保留原有日期和价格；本次取数失败，不伪造今日记录。
                 today_is_temporary = True
-                today_updated = True
+                print(f"[市场数据] 今日未取得有效行情，保留历史记录 {latest_data.date}")
+
             else:
                 print(f"[市场数据] [今日实时覆盖] 警告: 数据库中无历史数据可回溯")
     except Exception as e:
@@ -2725,9 +2617,10 @@ def update_asset_data(asset_id: int, db: Session, force: bool = False) -> Dict:
         print(f"[市场数据] ========== 资产数据更新完成 (asset_id={asset_id}) ==========")
         print(f"[市场数据] 统计: 今日更新={'是' if today_updated else '否'}, 今日临时={'是' if today_is_temporary else '否'}, 新增={new_data_count}, 补全指标={filled_metrics_count}, 跳过={skipped_count}, 总计={total_count}")
         
+        fresh = today_updated and not today_is_temporary
         return {
-            "success": True,
-            "message": message,
+            "success": fresh,
+            "message": message if fresh else "未取得今日有效行情；保留已有数据，请稍后重试（休市日可能无新行情）",
             "stored_count": total_count,
             "new_data_count": new_data_count,
             "filled_metrics_count": filled_metrics_count,

@@ -21,7 +21,7 @@ interface DragonTigerBoardProps {
 export function DragonTigerBoard({ className, initialData }: DragonTigerBoardProps) {
   const { data: rankings, error: swrError, isLoading, mutate } = useRankings(
     undefined,
-    initialData ? { fallbackData: initialData, revalidateOnMount: false } : undefined
+    { fallbackData: initialData ?? undefined, revalidateOnMount: true, refreshInterval: 300000 }
   )
   const error = swrError ? (swrError.message || "加载排名失败") : null
 
