@@ -109,10 +109,12 @@ export default function AdminPage() {
       }
     }
 
-    setToastMessage({ type: 'success', message })
+    if (result?.error) message += `\n${result.error}`
+    const hasFailure = result?.failed > 0 || !!result?.error || !result?.total
+    setToastMessage({ type: hasFailure ? 'error' : 'success', message })
     loadAssets()
     void invalidateAfterDataUpdate()
-    setTimeout(() => setToastMessage(null), 3000)
+    setTimeout(() => setToastMessage(null), hasFailure ? 15000 : 5000)
   }
 
   const handleUpdateData = async () => {
@@ -126,7 +128,7 @@ export default function AdminPage() {
       const taskId = response.task_id
 
       // Vercel 无状态运行模式会在同一次请求中完成任务并直接返回结果。
-      if (response.status === 'success') {
+      if (response.status === 'success' || response.status === 'partial' || (response.status === 'failed' && response.result)) {
         finishDataUpdate(response.result)
         return
       }
@@ -157,7 +159,7 @@ export default function AdminPage() {
           }
           
           // 检查任务状态
-          if (taskStatus.status === 'success') {
+          if (taskStatus.status === 'success' || taskStatus.status === 'partial' || (taskStatus.status === 'failed' && taskStatus.result)) {
             if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
             if (timeoutRef.current) clearTimeout(timeoutRef.current)
             pollIntervalRef.current = null

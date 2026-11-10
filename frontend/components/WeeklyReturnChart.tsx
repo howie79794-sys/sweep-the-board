@@ -12,7 +12,7 @@ import {
   ResponsiveContainer,
   Brush,
 } from "recharts"
-import { dataAPI } from "@/lib/api"
+import { useWeeklyChart } from "@/lib/hooks"
 import { formatPercent, formatChartAxisDate, formatTooltipDate, cn } from "@/lib/utils"
 import { UserAvatar } from "@/components/UserAvatar"
 import { type User } from "@/types"
@@ -73,16 +73,20 @@ export function WeeklyReturnChart({
   const [assets, setAssets] = useState<AssetWeeklyData[]>([])
   const [internalSelected, setInternalSelected] = useState<string | null>(null)
   const selectedAssetCode = selectedAssetCodeProp ?? internalSelected
+  const { data: liveData, error: fetchError } = useWeeklyChart({
+    fallbackData: initialData ?? undefined, revalidateOnMount: true, refreshInterval: 300000,
+  })
 
   useEffect(() => {
-    loadChartData()
-  }, [])
+    if (liveData) loadChartData()
+    if (fetchError) { setError(fetchError.message); setLoading(false) }
+  }, [liveData, fetchError])
 
   const loadChartData = async () => {
     try {
       setLoading(true)
-      // 服务端预取数据（ISR）：存在时不再发请求
-      const data = initialData ?? await dataAPI.getWeeklyChartData()
+      // ISR 仅作为首屏数据，之后持续使用 SWR 的最新响应。
+      const data = liveData
       if (!data || data.length === 0) {
         setError("暂无数据")
         return

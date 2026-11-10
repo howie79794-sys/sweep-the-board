@@ -68,7 +68,7 @@ def create_task() -> str:
     task_id = str(uuid.uuid4())
     tasks[task_id] = {
         "id": task_id,
-        "status": "processing",  # processing/success/failed
+        "status": "processing",  # processing/success/partial/failed
         "progress": {"completed": 0, "total": 0},
         "error_msg": None,
         "result": None,
@@ -83,9 +83,19 @@ def update_task_progress(task_id: str, completed: int, total: int):
         tasks[task_id]["progress"]["total"] = total
 
 def complete_task(task_id: str, result: dict):
-    """标记任务为成功"""
+    """按每项真实结果判定成功、部分完成或失败。"""
     if task_id in tasks:
-        tasks[task_id]["status"] = "success"
+        details = result.get("details")
+        if details is None:
+            details = [{"asset_id": item["asset_id"], "asset_name": str(item["asset_id"]), "result": item}
+                       for item in result.get("results", [])]
+        succeeded = sum(bool(item.get("result", {}).get("success")) for item in details)
+        failed = len(details) - succeeded
+        outcome = "success" if details and failed == 0 and not result.get("error") else ("partial" if succeeded else "failed")
+        result.update(total=len(details), success=succeeded, failed=failed, details=details)
+        result["message"] = {"success": "所有资产已获取有效行情", "partial": "更新部分完成，请查看详情", "failed": "本次更新未成功，请查看详情"}[outcome]
+        tasks[task_id]["status"] = outcome
+        tasks[task_id]["error_msg"] = result["message"] if outcome == "failed" else None
         tasks[task_id]["result"] = result
 
 def fail_task(task_id: str, error_msg: str):
@@ -1074,17 +1084,20 @@ def run_update_task(task_id: str, asset_ids: Optional[List[int]], force: bool):
             
             print(f"[API] [任务 {task_id}] 开始计算排名...")
             # 计算排名
+            ranking_error = None
             try:
                 today = date.today()
                 save_rankings(today, db)
                 print(f"[API] [任务 {task_id}] 排名计算完成")
             except Exception as e:
+                ranking_error = f"排名保存失败: {type(e).__name__}"
                 print(f"[API] [任务 {task_id}] 警告: 计算排名时发生错误: {type(e).__name__}: {str(e)}")
                 traceback.print_exc()
             
             result = {
                 "message": "数据更新完成",
-                "results": results
+                "results": results,
+                "error": ranking_error,
             }
             complete_task(task_id, result)
             print(f"[API] [任务 {task_id}] ========== 数据更新任务完成 ==========")
@@ -1159,7 +1172,7 @@ def run_update_task(task_id: str, asset_ids: Optional[List[int]], force: bool):
             except Exception as e:
                 print(f"[API] [任务 {task_id}] 警告: 计算排名时发生错误: {type(e).__name__}: {str(e)}")
                 traceback.print_exc()
-                # 排名计算失败不影响数据更新结果
+                results["error"] = f"排名保存失败: {type(e).__name__}"
             
             result = {
                 "message": "所有资产数据更新完成",

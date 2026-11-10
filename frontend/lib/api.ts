@@ -41,6 +41,7 @@ async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> 
   let response: Response
   try {
     response = await fetch(url, {
+      cache: 'no-store',
       ...options,
       headers: {
         'Content-Type': 'application/json',
@@ -248,7 +249,7 @@ export const dataAPI = {
     return fetchAPI<{
       task_id: string;
       message: string;
-      status: 'processing' | 'success' | 'failed';
+      status: 'processing' | 'success' | 'partial' | 'failed';
       result?: any;
       error_msg?: string | null;
     }>('/api/data/update', {
@@ -259,7 +260,7 @@ export const dataAPI = {
   getTaskStatus: (taskId: string) => {
     return fetchAPI<{
       id: string;
-      status: 'processing' | 'success' | 'failed';
+      status: 'processing' | 'success' | 'partial' | 'failed';
       progress: { completed: number; total: number };
       error_msg?: string | null;
       result?: any;

@@ -50,5 +50,8 @@ jobs:
           test -n "$SUPABASE_URL"
           test -n "$SUPABASE_SERVICE_ROLE_KEY"
 
+      - name: Run update regression tests
+        run: python -m unittest discover -s tests
+
       - name: Update market data and rankings
         run: python scripts/update_scheduled.py
