@@ -200,9 +200,12 @@ if AKSHARE_AVAILABLE:
 
     @with_retry(timeout=30, attempts=3, source="akshare")
     def _ak_futures_zh_daily_sina(symbol: str, start_date: str, end_date: str):
-        return ak.futures_zh_daily_sina(
-            symbol=symbol, start_date=start_date, end_date=end_date
-        )
+        # 当前 AkShare 仅接受 symbol，日期范围需在返回结果中筛选。
+        df = ak.futures_zh_daily_sina(symbol=symbol)
+        if df is None or df.empty:
+            return df
+        dates = pd.to_datetime(df["date"])
+        return df[(dates >= pd.to_datetime(start_date)) & (dates <= pd.to_datetime(end_date))].copy()
 
     @with_retry(timeout=20, attempts=2, source="akshare")
     def _ak_get_cffex_daily(target_date: str):
@@ -644,6 +647,10 @@ def resolve_futures_main_contract(code: str) -> Optional[str]:
         return None
     
     print(f"[市场数据] [akshare] 解析期货代码: 输入={code}, 基础代码={base_symbol}")
+
+    # 新浪连续合约使用 IF0/IC0/IH0/IM0；不使用其他行情系统的 88 后缀。
+    if symbol == base_symbol:
+        return f"{base_symbol}0"
     
     # 尝试使用 futures_main_relation 获取主力合约
     try:

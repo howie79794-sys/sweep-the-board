@@ -12,6 +12,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
+import pandas as pd
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,7 +20,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def load_function(path, name, namespace):
     tree = ast.parse((ROOT / path).read_text())
-    node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name)
+    node = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == name)
+    node.decorator_list = []  # external retry wrappers are irrelevant for offline unit tests
     exec(compile(ast.Module(body=[node], type_ignores=[]), str(ROOT / path), "exec"), namespace)
     return namespace[name]
 
@@ -134,6 +136,37 @@ class ScheduledExitTests(unittest.TestCase):
                 })
                 self.assertEqual(main(), expected)
                 db.close.assert_called_once()
+
+
+class ProviderDateTests(unittest.TestCase):
+    def test_futures_uses_supported_signature_and_filters_dates(self):
+        ak = MagicMock()
+        ak.futures_zh_daily_sina.return_value = pd.DataFrame({
+            "date": ["2026-10-30", "2026-11-10"], "close": [100, 110]})
+        fetch = load_function("services/market_data.py", "_ak_futures_zh_daily_sina", {"ak": ak, "pd": pd})
+        result = fetch("IF0", "20261110", "20261110")
+        ak.futures_zh_daily_sina.assert_called_once_with(symbol="IF0")
+        self.assertEqual(result["date"].tolist(), ["2026-11-10"])
+
+    def test_futures_continuous_symbol(self):
+        from typing import Optional
+        resolve = load_function("services/market_data.py", "resolve_futures_main_contract", {
+            "Optional": Optional, "AKSHARE_AVAILABLE": True, "print": MagicMock()})
+        for code in ("IF", "IF0", "CF.IF0", "IF=F"):
+            self.assertEqual(resolve(code), "IF0")
+
+    def test_realtime_preserves_provider_date(self):
+        from typing import Optional
+        ticker = MagicMock()
+        fetch = load_function("services/market_data.py", "fetch_realtime_price_yfinance", {
+            "Optional": Optional, "pd": pd, "YFINANCE_AVAILABLE": True,
+            "yf": SimpleNamespace(Ticker=lambda code: ticker),
+            "convert_to_yfinance_symbol": lambda code: code,
+            "_yf_ticker_history": lambda *a, **kw: pd.DataFrame({"Close": [100]},
+                index=pd.DatetimeIndex(["2026-10-30"], name="Date")),
+            "print": MagicMock(),
+        })
+        self.assertEqual(fetch("TEST")["date"].tolist(), ["2026-10-30"])
 
 
 if __name__ == "__main__":
