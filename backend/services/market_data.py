@@ -1414,7 +1414,18 @@ def fetch_fund_data(code: str, start_date: str, end_date: str) -> Optional[pd.Da
             print(f"[市场数据] [基金] 场内ETF数据获取失败: {type(e).__name__}: {str(e)}")
             df = None
     
-    # 策略2: 尝试净值数据接口（场内失败或非6位代码）
+    # 场内 ETF 必须保持交易价格口径，不能用单位净值冒充收盘价。
+    # 新浪日线可能延迟发布，改用已有的 Yahoo 日线备用源（保留真实日期）。
+    if is_six_digit and normalized_code.startswith(("5", "15")):
+        try:
+            fallback = fetch_stock_data_yfinance(normalized_code, start_date, end_date)
+            if fallback is not None and not fallback.empty:
+                return fallback
+        except Exception as e:
+            print(f"[市场数据] [基金] ETF 备用行情失败: {type(e).__name__}")
+        return None
+
+    # 策略2: 非场内 ETF 尝试净值数据接口
     if df is None or df.empty:
         print(f"[市场数据] [基金] 尝试净值数据接口")
         try:

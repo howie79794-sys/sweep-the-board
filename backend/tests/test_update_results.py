@@ -139,6 +139,26 @@ class ScheduledExitTests(unittest.TestCase):
 
 
 class ProviderDateTests(unittest.TestCase):
+    def test_etf_missing_sina_quote_uses_dated_fallback_not_nav(self):
+        from typing import Optional
+        for available in (True, False):
+            fallback = pd.DataFrame({"date": ["2026-11-10"], "close": [8.5]}) if available else None
+            provider = MagicMock(return_value=fallback)
+            nav = MagicMock()
+            fetch = load_function("services/market_data.py", "fetch_fund_data", {
+                "Optional": Optional, "pd": pd, "AKSHARE_AVAILABLE": True,
+                "normalize_date_str": lambda value: value,
+                "apply_date_span_patch": lambda start, end: (start, end),
+                "normalize_stock_code": lambda code: code,
+                "_ak_fund_etf_hist_sina": lambda code: pd.DataFrame(),
+                "fetch_stock_data_yfinance": provider,
+                "_ak_fund_open_fund_info_em": nav, "print": MagicMock(),
+            })
+            result = fetch("518880", "2026-11-10", "2026-11-11")
+            self.assertIs(result, fallback)
+            provider.assert_called_once_with("518880", "2026-11-10", "2026-11-11")
+            nav.assert_not_called()
+
     def test_etf_symbol_includes_exchange(self):
         ak = MagicMock()
         fetch = load_function("services/market_data.py", "_ak_fund_etf_hist_sina", {"ak": ak})
